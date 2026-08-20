@@ -1,7 +1,9 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  getAudioUrl,
   getTranscript,
+  getTranscriptDownloadUrl,
   listInterviews,
   processInterview,
   subscribeToJob,
@@ -50,6 +52,12 @@ function stageLabel(stage: string): string {
     .join(" ");
 }
 
+function timestampToSeconds(value: string): number {
+  const parts = value.split(":").map(Number);
+  if (parts.length !== 3 || parts.some(Number.isNaN)) return 0;
+  return parts[0] * 3600 + parts[1] * 60 + parts[2];
+}
+
 function parseTranscript(raw: string): TranscriptLine[] {
   return raw
     .split("\n")
@@ -62,6 +70,8 @@ function parseTranscript(raw: string): TranscriptLine[] {
         return {
           start: "",
           end: "",
+          startSeconds: 0,
+          endSeconds: 0,
           speaker: "Unknown",
           text: line,
         };
@@ -70,6 +80,8 @@ function parseTranscript(raw: string): TranscriptLine[] {
       return {
         start: match[1],
         end: match[2],
+        startSeconds: timestampToSeconds(match[1]),
+        endSeconds: timestampToSeconds(match[2]),
         speaker: match[3].replace(/\s*\[QUALITY:.*?\]\s*$/, "").trim(),
         text: match[4],
       };
@@ -94,6 +106,8 @@ export default function App() {
   const [transcriptLines, setTranscriptLines] = useState<TranscriptLine[]>([]);
   const [isTranscriptLoading, setIsTranscriptLoading] = useState(false);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
+  const [currentAudioTime, setCurrentAudioTime] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const refreshInterviews = async (): Promise<Interview[]> => {
     const data = await listInterviews();
@@ -134,6 +148,14 @@ export default function App() {
     } finally {
       setIsTranscriptLoading(false);
     }
+  };
+
+  const seekTo = (seconds: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    audio.currentTime = seconds;
+    void audio.play();
   };
 
   const closeUpload = () => {
@@ -253,11 +275,34 @@ export default function App() {
               </p>
             </div>
 
-            <div className="transcript-meta-card">
-              <span>{formatDate(activeInterview.interview_datetime)}</span>
-              <strong>{transcriptLines.length} segments</strong>
+            <div className="transcript-header-actions">
+              <a
+                className="secondary-button download-button"
+                href={getTranscriptDownloadUrl(activeInterview.id)}
+              >
+                ↓ Download transcript
+              </a>
+              <div className="transcript-meta-card">
+                <span>{formatDate(activeInterview.interview_datetime)}</span>
+                <strong>{transcriptLines.length} segments</strong>
+              </div>
             </div>
           </header>
+
+          <section className="audio-player-card">
+            <div className="audio-player-copy">
+              <span className="insight-label">RECORDING</span>
+              <strong>Interview audio</strong>
+              <p>Click any transcript segment to jump to that moment.</p>
+            </div>
+            <audio
+              className="audio-player"
+              controls
+              ref={audioRef}
+              src={getAudioUrl(activeInterview.id)}
+              onTimeUpdate={(event) => setCurrentAudioTime(event.currentTarget.currentTime)}
+            />
+          </section>
 
           <section className="transcript-layout">
             <div className="transcript-panel">
@@ -279,12 +324,17 @@ export default function App() {
                     const isCandidate = line.speaker.toLowerCase().includes("candidate");
                     const isInterviewer = line.speaker.toLowerCase().includes("interviewer");
 
-                    return (
+                      const isActive =
+                        currentAudioTime >= line.startSeconds &&
+                        currentAudioTime < Math.max(line.endSeconds, line.startSeconds + 1);
+
+                      return (
                       <article
                         className={`transcript-segment ${
                           isCandidate ? "candidate-segment" : ""
-                        }`}
+                        } ${isActive ? "active-segment" : ""}`}
                         key={`${line.start}-${index}`}
+                        onClick={() => seekTo(line.startSeconds)}
                       >
                         <div className="segment-time">{line.start}</div>
                         <div className="segment-content">

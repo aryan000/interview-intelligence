@@ -10,23 +10,27 @@ const WS_BASE = "ws://127.0.0.1:8000/api/v1";
 
 export async function listInterviews(): Promise<Interview[]> {
   const response = await fetch(`${API_BASE}/interviews`);
-
   if (!response.ok) {
     throw new Error(`Failed to load interviews (${response.status})`);
   }
-
   return response.json() as Promise<Interview[]>;
 }
 
 export async function getTranscript(interviewId: string): Promise<TranscriptResponse> {
   const response = await fetch(`${API_BASE}/interviews/${interviewId}/transcript`);
-
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Failed to load transcript (${response.status})`);
   }
-
   return response.json() as Promise<TranscriptResponse>;
+}
+
+export function getAudioUrl(interviewId: string): string {
+  return `${API_BASE}/interviews/${interviewId}/audio`;
+}
+
+export function getTranscriptDownloadUrl(interviewId: string): string {
+  return `${API_BASE}/interviews/${interviewId}/transcript/download`;
 }
 
 export async function uploadInterview(input: {
@@ -45,13 +49,8 @@ export async function uploadInterview(input: {
   form.append("interview_datetime", input.interviewDatetime);
   form.append("sequence_number", String(input.sequenceNumber));
 
-  if (input.role.trim()) {
-    form.append("role", input.role.trim());
-  }
-
-  if (input.targetLevel.trim()) {
-    form.append("target_level", input.targetLevel.trim());
-  }
+  if (input.role.trim()) form.append("role", input.role.trim());
+  if (input.targetLevel.trim()) form.append("target_level", input.targetLevel.trim());
 
   const response = await fetch(`${API_BASE}/interviews/upload`, {
     method: "POST",

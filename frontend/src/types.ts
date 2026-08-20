@@ -36,6 +36,8 @@ export type TranscriptResponse = {
 export type TranscriptLine = {
   start: string;
   end: string;
+  startSeconds: number;
+  endSeconds: number;
   speaker: string;
   text: string;
 };

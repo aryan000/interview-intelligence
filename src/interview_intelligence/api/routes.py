@@ -16,7 +16,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from interview_intelligence.api.dependencies import (
     background_manager,
@@ -52,6 +52,19 @@ def _to_interview_response(record: InterviewRecord) -> InterviewResponse:
         source_audio_path=record.source_audio_path,
         artifact_root_path=record.artifact_root_path,
     )
+
+
+def _require_interview(
+    interview_id: UUID,
+    request: Request,
+) -> InterviewRecord:
+    record = interviews(request).get(interview_id)
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Interview not found",
+        )
+    return record
 
 
 def build_router() -> APIRouter:
@@ -156,13 +169,7 @@ def build_router() -> APIRouter:
         interview_id: UUID,
         request: Request,
     ) -> InterviewResponse:
-        record = interviews(request).get(interview_id)
-        if record is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Interview not found",
-            )
-        return _to_interview_response(record)
+        return _to_interview_response(_require_interview(interview_id, request))
 
     @router.post(
         "/interviews/{interview_id}/process",
@@ -173,12 +180,7 @@ def build_router() -> APIRouter:
         interview_id: UUID,
         request: Request,
     ) -> ProcessInterviewResponse:
-        record = interviews(request).get(interview_id)
-        if record is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Interview not found",
-            )
+        record = _require_interview(interview_id, request)
 
         job_repository = jobs(request)
         latest = job_repository.latest_for_interview(interview_id)
@@ -302,6 +304,25 @@ def build_router() -> APIRouter:
             event_broker.unsubscribe(job_id, queue)
 
     @router.get(
+        "/interviews/{interview_id}/audio",
+        response_class=FileResponse,
+    )
+    def get_audio(
+        interview_id: UUID,
+        request: Request,
+    ) -> FileResponse:
+        record = _require_interview(interview_id, request)
+        audio_path = Path(record.source_audio_path)
+
+        if not audio_path.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Audio file not found",
+            )
+
+        return FileResponse(audio_path)
+
+    @router.get(
         "/interviews/{interview_id}/transcript",
         response_model=TranscriptResponse,
     )
@@ -309,12 +330,7 @@ def build_router() -> APIRouter:
         interview_id: UUID,
         request: Request,
     ) -> TranscriptResponse:
-        record = interviews(request).get(interview_id)
-        if record is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Interview not found",
-            )
+        record = _require_interview(interview_id, request)
         if record.artifact_root_path is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -341,12 +357,13 @@ def build_router() -> APIRouter:
         interview_id: UUID,
         request: Request,
     ) -> str:
-        record = interviews(request).get(interview_id)
-        if record is None or record.artifact_root_path is None:
+        record = _require_interview(interview_id, request)
+        if record.artifact_root_path is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Transcript not found",
             )
+
         transcript_path = Path(record.artifact_root_path) / "transcript.txt"
         if not transcript_path.is_file():
             raise HTTPException(
@@ -354,5 +371,39 @@ def build_router() -> APIRouter:
                 detail="Transcript not found",
             )
         return transcript_path.read_text(encoding="utf-8")
+
+    @router.get(
+        "/interviews/{interview_id}/transcript/download",
+        response_class=FileResponse,
+    )
+    def download_transcript(
+        interview_id: UUID,
+        request: Request,
+    ) -> FileResponse:
+        record = _require_interview(interview_id, request)
+        if record.artifact_root_path is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Transcript not found",
+            )
+
+        transcript_path = Path(record.artifact_root_path) / "transcript.txt"
+        if not transcript_path.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Transcript not found",
+            )
+
+        filename = (
+            f"{record.company}_{record.interview_datetime:%Y%m%d_%H%M}_"
+            f"{record.recruiter_or_interviewer}_{record.sequence_number:02d}.txt"
+        )
+        safe_filename = "_".join(filename.split())
+
+        return FileResponse(
+            transcript_path,
+            media_type="text/plain",
+            filename=safe_filename,
+        )
 
     return router
