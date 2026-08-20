@@ -171,6 +171,7 @@ function parseTranscript(raw: string): TranscriptLine[] {
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("workspace");
+  const [isSidebarPinnedOpen, setIsSidebarPinnedOpen] = useState(true);
   const [interviews, setInterviews] = useState<Interview[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -200,6 +201,8 @@ export default function App() {
   const [deleteTarget, setDeleteTarget] = useState<Interview | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const isSidebarExpanded = isSidebarPinnedOpen;
 
   const refreshInterviews = async (): Promise<Interview[]> => {
     const data = await listInterviews();
@@ -434,36 +437,50 @@ export default function App() {
 
   if (screen === "transcript" && activeInterview) {
     return (
-      <div className="app-shell">
-        <aside className="sidebar">
-          <div className="brand">
-            <div className="brand-mark">II</div>
-            <div>
-              <div className="brand-name">Interview Intelligence</div>
-              <div className="brand-subtitle">Private interview workspace</div>
-            </div>
+      <div className={`app-shell ${isSidebarPinnedOpen ? "shell-sidebar-expanded" : "shell-sidebar-collapsed"}`}>
+        <aside
+        className={`sidebar ${isSidebarPinnedOpen ? "sidebar-expanded" : "sidebar-collapsed"}`}
+      >
+        <div className="brand">
+          <div className="brand-mark">II</div>
+          <div className="brand-copy">
+            <div className="brand-name">Interview Intelligence</div>
+            <div className="brand-subtitle">Private interview workspace</div>
           </div>
+        </div>
 
-          <nav className="nav">
-            <button
-              className="nav-item"
-              type="button"
-              onClick={() => setScreen("workspace")}
-            >
-              <span className="nav-icon">◫</span>
-              Interviews
-            </button>
-            <button className="nav-item nav-item-active" type="button">
-              <span className="nav-icon">◌</span>
-              Transcript Studio
-            </button>
-          </nav>
+        <nav className="nav">
+          <button className="nav-item nav-item-active" type="button">
+            <span className="nav-icon">◫</span>
+            <span className="nav-label">Interviews</span>
+          </button>
+          <button className="nav-item" type="button" onClick={() => activeInterview && setScreen("transcript")}>
+            <span className="nav-icon">◌</span>
+            <span className="nav-label">Transcript Studio</span>
+          </button>
+        </nav>
 
-          <div className="sidebar-footer">
-            <div className="privacy-pill">Local-first</div>
-            <p>Your recordings stay on this machine unless you explicitly share them.</p>
-          </div>
-        </aside>
+        <button
+          className="sidebar-toggle"
+          type="button"
+          aria-label={isSidebarPinnedOpen ? "Collapse sidebar" : "Expand sidebar"}
+          title={isSidebarPinnedOpen ? "Collapse sidebar" : "Expand sidebar"}
+          onClick={() => {
+            setIsSidebarPinnedOpen((current) => !current);
+          }}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path
+              d={isSidebarPinnedOpen ? "M14.5 6 8.5 12l6 6" : "m9.5 6 6 6-6 6"}
+            />
+          </svg>
+        </button>
+
+        <div className="sidebar-footer">
+          <div className="privacy-pill">Local-first</div>
+          <p>Your recordings stay on this machine unless you explicitly share them.</p>
+        </div>
+      </aside>
 
         <main className="main transcript-main">
           <button className="back-button" type="button" onClick={() => setScreen("workspace")}>
@@ -757,26 +774,44 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div className={`app-shell ${isSidebarPinnedOpen ? "shell-sidebar-expanded" : "shell-sidebar-collapsed"}`}>
+      <aside
+        className={`sidebar ${isSidebarPinnedOpen ? "sidebar-expanded" : "sidebar-collapsed"}`}
+      >
         <div className="brand">
           <div className="brand-mark">II</div>
-          <div>
+          <div className="brand-copy">
             <div className="brand-name">Interview Intelligence</div>
             <div className="brand-subtitle">Private interview workspace</div>
           </div>
         </div>
 
         <nav className="nav">
-          <button className="nav-item nav-item-active" type="button">
+          <button className="nav-item" type="button" onClick={() => setScreen("workspace")}>
             <span className="nav-icon">◫</span>
-            Interviews
+            <span className="nav-label">Interviews</span>
           </button>
-          <button className="nav-item" type="button">
+          <button className="nav-item nav-item-active" type="button">
             <span className="nav-icon">◌</span>
-            Transcript Studio
+            <span className="nav-label">Transcript Studio</span>
           </button>
         </nav>
+
+        <button
+          className="sidebar-toggle"
+          type="button"
+          aria-label={isSidebarPinnedOpen ? "Collapse sidebar" : "Expand sidebar"}
+          title={isSidebarPinnedOpen ? "Collapse sidebar" : "Expand sidebar"}
+          onClick={() => {
+            setIsSidebarPinnedOpen((current) => !current);
+          }}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path
+              d={isSidebarPinnedOpen ? "M14.5 6 8.5 12l6 6" : "m9.5 6 6 6-6 6"}
+            />
+          </svg>
+        </button>
 
         <div className="sidebar-footer">
           <div className="privacy-pill">Local-first</div>
