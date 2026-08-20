@@ -1,0 +1,488 @@
+import { FormEvent, useEffect, useMemo, useState } from "react";
+
+import {
+  listInterviews,
+  processInterview,
+  subscribeToJob,
+  uploadInterview,
+} from "./api";
+import type { Interview, JobEvent } from "./types";
+
+type UploadFormState = {
+  company: string;
+  interviewer: string;
+  datetime: string;
+  sequence: number;
+  role: string;
+  targetLevel: string;
+  audio: File | null;
+};
+
+const emptyUploadForm: UploadFormState = {
+  company: "",
+  interviewer: "",
+  datetime: "",
+  sequence: 1,
+  role: "Engineering Manager",
+  targetLevel: "",
+  audio: null,
+};
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(value));
+}
+
+function statusLabel(interview: Interview): string {
+  return interview.artifact_root_path ? "Ready" : "Not processed";
+}
+
+function stageLabel(stage: string): string {
+  return stage
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+export default function App() {
+  const [interviews, setInterviews] = useState<Interview[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [uploadForm, setUploadForm] = useState<UploadFormState>(emptyUploadForm);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const [activeInterview, setActiveInterview] = useState<Interview | null>(null);
+  const [jobEvent, setJobEvent] = useState<JobEvent | null>(null);
+  const [jobError, setJobError] = useState<string | null>(null);
+
+  const refreshInterviews = async (): Promise<Interview[]> => {
+    const data = await listInterviews();
+    setInterviews(data);
+    return data;
+  };
+
+  useEffect(() => {
+    void refreshInterviews()
+      .catch((caught: unknown) => {
+        setError(caught instanceof Error ? caught.message : "Unable to load interviews.");
+      })
+      .finally(() => setIsLoading(false));
+  }, []);
+
+  const readyCount = useMemo(
+    () => interviews.filter((item) => item.artifact_root_path).length,
+    [interviews],
+  );
+
+  const closeUpload = () => {
+    if (isSubmitting) {
+      return;
+    }
+    setIsUploadOpen(false);
+    setSubmitError(null);
+    setUploadForm(emptyUploadForm);
+  };
+
+  const handleUploadSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!uploadForm.audio) {
+      setSubmitError("Choose an audio file first.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      const interview = await uploadInterview({
+        audio: uploadForm.audio,
+        company: uploadForm.company,
+        recruiterOrInterviewer: uploadForm.interviewer,
+        interviewDatetime: uploadForm.datetime,
+        sequenceNumber: uploadForm.sequence,
+        role: uploadForm.role,
+        targetLevel: uploadForm.targetLevel,
+      });
+
+      const processResult = await processInterview(interview.id);
+
+      setActiveInterview(interview);
+      setJobEvent({
+        job_id: processResult.job_id,
+        interview_id: processResult.interview_id,
+        status: processResult.status as JobEvent["status"],
+        stage: "inspection",
+        progress_percent: 0,
+        processed_audio_seconds: 0,
+        total_audio_seconds: 0,
+        message: "Starting processing",
+      });
+
+      setIsUploadOpen(false);
+      setUploadForm(emptyUploadForm);
+
+      subscribeToJob(
+        processResult.job_id,
+        (nextEvent) => {
+          setJobEvent(nextEvent);
+
+          if (nextEvent.status === "completed") {
+            void refreshInterviews().then((nextInterviews) => {
+              const refreshed = nextInterviews.find(
+                (item) => item.id === interview.id,
+              );
+              if (refreshed) {
+                setActiveInterview(refreshed);
+              }
+            });
+          }
+        },
+        (socketError) => setJobError(socketError.message),
+      );
+    } catch (caught: unknown) {
+      setSubmitError(
+        caught instanceof Error ? caught.message : "Unable to start processing.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">II</div>
+          <div>
+            <div className="brand-name">Interview Intelligence</div>
+            <div className="brand-subtitle">Private interview workspace</div>
+          </div>
+        </div>
+
+        <nav className="nav">
+          <button className="nav-item nav-item-active" type="button">
+            <span className="nav-icon">◫</span>
+            Interviews
+          </button>
+          <button className="nav-item" type="button">
+            <span className="nav-icon">◌</span>
+            Transcript Studio
+          </button>
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="privacy-pill">Local-first</div>
+          <p>Your recordings stay on this machine unless you explicitly share them.</p>
+        </div>
+      </aside>
+
+      <main className="main">
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">INTERVIEW WORKSPACE</p>
+            <h1>Your interviews</h1>
+            <p className="page-subtitle">
+              Review conversations, transcripts and progress from one place.
+            </p>
+          </div>
+
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => setIsUploadOpen(true)}
+          >
+            <span>＋</span>
+            Add interview
+          </button>
+        </header>
+
+        {activeInterview && jobEvent && (
+          <section className="processing-card">
+            <div className="processing-copy">
+              <div className="processing-kicker">
+                {activeInterview.company} · Round {activeInterview.sequence_number}
+              </div>
+              <div className="processing-title-row">
+                <div>
+                  <h2>
+                    {jobEvent.status === "completed"
+                      ? "Interview ready"
+                      : "Processing interview"}
+                  </h2>
+                  <p>
+                    {jobEvent.message ??
+                      `${stageLabel(jobEvent.stage)} in progress`}
+                  </p>
+                </div>
+                <strong>{Math.round(jobEvent.progress_percent)}%</strong>
+              </div>
+              <div className="progress-track">
+                <div
+                  className="progress-value"
+                  style={{ width: `${jobEvent.progress_percent}%` }}
+                />
+              </div>
+              <div className="stage-row">
+                {["Preprocessing", "Transcription", "Diarization", "Alignment", "Export"].map(
+                  (stage) => (
+                    <span
+                      key={stage}
+                      className={
+                        stage.toLowerCase() === jobEvent.stage
+                          ? "stage-chip stage-chip-active"
+                          : "stage-chip"
+                      }
+                    >
+                      {stage}
+                    </span>
+                  ),
+                )}
+              </div>
+              {jobError && <div className="inline-error">{jobError}</div>}
+            </div>
+          </section>
+        )}
+
+        <section className="stats-grid">
+          <div className="stat-card">
+            <span className="stat-label">Total interviews</span>
+            <strong>{interviews.length}</strong>
+            <span className="stat-help">Across every company and round</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-label">Ready to review</span>
+            <strong>{readyCount}</strong>
+            <span className="stat-help">Processed transcripts available</span>
+          </div>
+          <div className="stat-card stat-card-accent">
+            <span className="stat-label">Feedback loop</span>
+            <strong>Coming next</strong>
+            <span className="stat-help">AI review across interview rounds</span>
+          </div>
+        </section>
+
+        <section className="content-card">
+          <div className="section-header">
+            <div>
+              <h2>Recent interviews</h2>
+              <p>Newest rounds appear first.</p>
+            </div>
+            <div className="search-shell">
+              <span>⌕</span>
+              <input aria-label="Search interviews" placeholder="Search company or interviewer" />
+            </div>
+          </div>
+
+          {isLoading ? (
+            <div className="empty-state">Loading interviews…</div>
+          ) : error ? (
+            <div className="empty-state error-state">
+              <strong>Could not load your interviews.</strong>
+              <span>{error}</span>
+            </div>
+          ) : interviews.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon">◎</div>
+              <strong>No interviews yet</strong>
+              <span>Add your first recording to start building your feedback loop.</span>
+            </div>
+          ) : (
+            <div className="interview-table">
+              <div className="table-row table-head">
+                <span>Interview</span>
+                <span>Interviewer</span>
+                <span>Date</span>
+                <span>Status</span>
+                <span />
+              </div>
+
+              {interviews.map((interview) => (
+                <button className="table-row interview-row" key={interview.id} type="button">
+                  <span className="interview-primary">
+                    <span className="company-avatar">
+                      {interview.company.slice(0, 1).toUpperCase()}
+                    </span>
+                    <span>
+                      <strong>{interview.company}</strong>
+                      <small>
+                        {interview.role ?? "Interview"} · Round {interview.sequence_number}
+                      </small>
+                    </span>
+                  </span>
+
+                  <span>{interview.recruiter_or_interviewer}</span>
+                  <span>{formatDate(interview.interview_datetime)}</span>
+
+                  <span>
+                    <span
+                      className={
+                        interview.artifact_root_path
+                          ? "status-pill status-ready"
+                          : "status-pill status-pending"
+                      }
+                    >
+                      {statusLabel(interview)}
+                    </span>
+                  </span>
+
+                  <span className="row-arrow">→</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      </main>
+
+      {isUploadOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-card" role="dialog" aria-modal="true">
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">NEW INTERVIEW</p>
+                <h2>Add interview recording</h2>
+                <p>Upload the recording and we'll process it locally.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={closeUpload}>
+                ×
+              </button>
+            </div>
+
+            <form className="upload-form" onSubmit={handleUploadSubmit}>
+              <label className="file-drop">
+                <input
+                  accept=".mp3,.wav,.m4a,.aac,audio/*"
+                  type="file"
+                  onChange={(event) =>
+                    setUploadForm((current) => ({
+                      ...current,
+                      audio: event.target.files?.[0] ?? null,
+                    }))
+                  }
+                />
+                <div className="file-drop-icon">↑</div>
+                <strong>
+                  {uploadForm.audio?.name ?? "Choose interview recording"}
+                </strong>
+                <span>MP3, WAV, M4A or AAC</span>
+              </label>
+
+              <div className="form-grid">
+                <label>
+                  <span>Company</span>
+                  <input
+                    required
+                    value={uploadForm.company}
+                    onChange={(event) =>
+                      setUploadForm((current) => ({
+                        ...current,
+                        company: event.target.value,
+                      }))
+                    }
+                    placeholder="e.g. Navi"
+                  />
+                </label>
+
+                <label>
+                  <span>Interviewer / recruiter</span>
+                  <input
+                    required
+                    value={uploadForm.interviewer}
+                    onChange={(event) =>
+                      setUploadForm((current) => ({
+                        ...current,
+                        interviewer: event.target.value,
+                      }))
+                    }
+                    placeholder="e.g. Sachin"
+                  />
+                </label>
+
+                <label>
+                  <span>Date & time</span>
+                  <input
+                    required
+                    type="datetime-local"
+                    value={uploadForm.datetime}
+                    onChange={(event) =>
+                      setUploadForm((current) => ({
+                        ...current,
+                        datetime: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>Round</span>
+                  <input
+                    min={1}
+                    required
+                    type="number"
+                    value={uploadForm.sequence}
+                    onChange={(event) =>
+                      setUploadForm((current) => ({
+                        ...current,
+                        sequence: Number(event.target.value),
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>Role</span>
+                  <input
+                    value={uploadForm.role}
+                    onChange={(event) =>
+                      setUploadForm((current) => ({
+                        ...current,
+                        role: event.target.value,
+                      }))
+                    }
+                    placeholder="Engineering Manager"
+                  />
+                </label>
+
+                <label>
+                  <span>Target level</span>
+                  <input
+                    value={uploadForm.targetLevel}
+                    onChange={(event) =>
+                      setUploadForm((current) => ({
+                        ...current,
+                        targetLevel: event.target.value,
+                      }))
+                    }
+                    placeholder="Optional"
+                  />
+                </label>
+              </div>
+
+              {submitError && <div className="inline-error">{submitError}</div>}
+
+              <div className="modal-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={closeUpload}
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </button>
+                <button className="primary-button" type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Starting…" : "Create & process"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

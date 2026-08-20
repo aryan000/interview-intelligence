@@ -1,10 +1,21 @@
 import asyncio
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
-from uuid import UUID
+from typing import Annotated, cast
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    APIRouter,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import PlainTextResponse
 
 from interview_intelligence.api.dependencies import (
@@ -25,6 +36,8 @@ from interview_intelligence.jobs.broker import JobEventBroker
 from interview_intelligence.jobs.service import ProcessingJobService
 from interview_intelligence.persistence.models import InterviewRecord
 from interview_intelligence.persistence.repositories import ProcessingJobRepository
+
+_ALLOWED_AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac"}
 
 
 def _to_interview_response(record: InterviewRecord) -> InterviewResponse:
@@ -73,6 +86,52 @@ def build_router() -> APIRouter:
             role=payload.role,
             target_level=payload.target_level,
             source_audio_path=str(source),
+            created_at=now,
+            updated_at=now,
+        )
+        interviews(request).save(record)
+        return _to_interview_response(record)
+
+    @router.post(
+        "/interviews/upload",
+        response_model=InterviewResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def upload_interview(
+        request: Request,
+        audio: Annotated[UploadFile, File()],
+        company: Annotated[str, Form()],
+        recruiter_or_interviewer: Annotated[str, Form()],
+        interview_datetime: Annotated[datetime, Form()],
+        sequence_number: Annotated[int, Form()] = 1,
+        role: Annotated[str | None, Form()] = None,
+        target_level: Annotated[str | None, Form()] = None,
+    ) -> InterviewResponse:
+        suffix = Path(audio.filename or "").suffix.lower()
+        if suffix not in _ALLOWED_AUDIO_SUFFIXES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Unsupported audio format. Use MP3, WAV, M4A, or AAC.",
+            )
+
+        upload_dir = cast(Path, request.app.state.upload_dir)
+        destination = upload_dir / f"{uuid4().hex}{suffix}"
+
+        try:
+            with destination.open("wb") as output:
+                shutil.copyfileobj(audio.file, output)
+        finally:
+            await audio.close()
+
+        now = datetime.now(UTC)
+        record = InterviewRecord(
+            company=company.strip(),
+            recruiter_or_interviewer=recruiter_or_interviewer.strip(),
+            interview_datetime=interview_datetime,
+            sequence_number=sequence_number,
+            role=role.strip() if role else None,
+            target_level=target_level.strip() if target_level else None,
+            source_audio_path=str(destination),
             created_at=now,
             updated_at=now,
         )

@@ -49,12 +49,15 @@ def create_app(
     interviews = InterviewRepository(database)
     jobs = ProcessingJobRepository(database)
     event_broker = JobEventBroker()
-    resolved_output_root = output_root or settings.recordings_dir
+    resolved_output_root = (output_root or settings.recordings_dir).expanduser().resolve()
+    upload_dir = resolved_output_root / "_uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
 
     app.state.database = database
     app.state.interviews = interviews
     app.state.jobs = jobs
     app.state.job_event_broker = event_broker
+    app.state.upload_dir = upload_dir
 
     def coordinator_factory() -> ExistingInterviewProcessingCoordinator:
         return ExistingInterviewProcessingCoordinator(
