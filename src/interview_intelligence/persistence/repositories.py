@@ -2,10 +2,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from interview_intelligence.persistence.database import SQLiteDatabase
-from interview_intelligence.persistence.models import (
-    InterviewRecord,
-    ProcessingJobRecord,
-)
+from interview_intelligence.persistence.models import InterviewRecord, ProcessingJobRecord
 
 
 def _utcnow() -> datetime:
@@ -21,17 +18,9 @@ class InterviewRepository:
             connection.execute(
                 """
                 INSERT INTO interviews (
-                    id,
-                    company,
-                    recruiter_or_interviewer,
-                    interview_datetime,
-                    sequence_number,
-                    role,
-                    target_level,
-                    source_audio_path,
-                    artifact_root_path,
-                    created_at,
-                    updated_at
+                    id, company, recruiter_or_interviewer, interview_datetime,
+                    sequence_number, role, target_level, source_audio_path,
+                    artifact_root_path, created_at, updated_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
@@ -72,6 +61,18 @@ class InterviewRepository:
 
         return InterviewRecord.model_validate(dict(row))
 
+    def list_all(self) -> list[InterviewRecord]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM interviews
+                ORDER BY interview_datetime DESC, created_at DESC
+                """
+            ).fetchall()
+
+        return [InterviewRecord.model_validate(dict(row)) for row in rows]
+
     def set_artifact_root(self, interview_id: UUID, artifact_root_path: str) -> None:
         now = _utcnow()
         with self.database.connect() as connection:
@@ -94,19 +95,9 @@ class ProcessingJobRepository:
             connection.execute(
                 """
                 INSERT INTO processing_jobs (
-                    id,
-                    interview_id,
-                    status,
-                    stage,
-                    progress_percent,
-                    processed_audio_seconds,
-                    total_audio_seconds,
-                    message,
-                    error_message,
-                    started_at,
-                    completed_at,
-                    created_at,
-                    updated_at
+                    id, interview_id, status, stage, progress_percent,
+                    processed_audio_seconds, total_audio_seconds, message,
+                    error_message, started_at, completed_at, created_at, updated_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
@@ -150,10 +141,7 @@ class ProcessingJobRepository:
 
         return ProcessingJobRecord.model_validate(dict(row))
 
-    def latest_for_interview(
-        self,
-        interview_id: UUID,
-    ) -> ProcessingJobRecord | None:
+    def latest_for_interview(self, interview_id: UUID) -> ProcessingJobRecord | None:
         with self.database.connect() as connection:
             row = connection.execute(
                 """

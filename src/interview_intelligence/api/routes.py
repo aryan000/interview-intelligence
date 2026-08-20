@@ -80,6 +80,16 @@ def build_router() -> APIRouter:
         return _to_interview_response(record)
 
     @router.get(
+        "/interviews",
+        response_model=list[InterviewResponse],
+    )
+    def list_interviews(request: Request) -> list[InterviewResponse]:
+        return [
+            _to_interview_response(record)
+            for record in interviews(request).list_all()
+        ]
+
+    @router.get(
         "/interviews/{interview_id}",
         response_model=InterviewResponse,
     )
