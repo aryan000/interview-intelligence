@@ -8,6 +8,7 @@ export type Interview = {
   target_level: string | null;
   source_audio_path: string;
   artifact_root_path: string | null;
+  duration_seconds: number | null;
 };
 
 export type ProcessInterviewResponse = {
@@ -25,6 +26,11 @@ export type JobEvent = {
   processed_audio_seconds: number;
   total_audio_seconds: number;
   message: string | null;
+  error_message?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
   occurred_at?: string;
 };
 

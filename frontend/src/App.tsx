@@ -2,8 +2,10 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   analyzeInterview,
+  deleteInterview,
   getAudioUrl,
   getInterviewReview,
+  getLatestInterviewJob,
   getTranscript,
   getTranscriptDownloadUrl,
   listInterviews,
@@ -36,6 +38,23 @@ const emptyUploadForm: UploadFormState = {
   audio: null,
 };
 
+function formatDuration(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "—";
+  }
+
+  const totalSeconds = Math.max(0, Math.round(value));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat("en-IN", {
     day: "2-digit",
@@ -53,6 +72,58 @@ function stageLabel(stage: string): string {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+const PROCESSING_STAGES = [
+  "preprocessing",
+  "transcription",
+  "diarization",
+  "alignment",
+  "export",
+] as const;
+
+function formatElapsed(totalSeconds: number): string {
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatClockTime(value: Date): string {
+  return new Intl.DateTimeFormat("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(value);
+}
+
+function stageState(
+  stage: (typeof PROCESSING_STAGES)[number],
+  currentStage: string,
+  status: JobEvent["status"],
+): "completed" | "active" | "pending" {
+  if (status === "completed") {
+    return "completed";
+  }
+
+  const currentIndex = PROCESSING_STAGES.indexOf(
+    currentStage as (typeof PROCESSING_STAGES)[number],
+  );
+  const stageIndex = PROCESSING_STAGES.indexOf(stage);
+
+  if (currentIndex === -1) {
+    return stage === "preprocessing" ? "active" : "pending";
+  }
+
+  if (stageIndex < currentIndex) return "completed";
+  if (stageIndex === currentIndex) return "active";
+  return "pending";
 }
 
 function timestampToSeconds(value: string): number {
@@ -112,6 +183,8 @@ export default function App() {
   const [activeInterview, setActiveInterview] = useState<Interview | null>(null);
   const [jobEvent, setJobEvent] = useState<JobEvent | null>(null);
   const [jobError, setJobError] = useState<string | null>(null);
+  const [processingStartedAt, setProcessingStartedAt] = useState<Date | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const [transcriptLines, setTranscriptLines] = useState<TranscriptLine[]>([]);
   const [isTranscriptLoading, setIsTranscriptLoading] = useState(false);
@@ -124,6 +197,10 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
 
+  const [deleteTarget, setDeleteTarget] = useState<Interview | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
   const refreshInterviews = async (): Promise<Interview[]> => {
     const data = await listInterviews();
     setInterviews(data);
@@ -131,12 +208,69 @@ export default function App() {
   };
 
   useEffect(() => {
-    void refreshInterviews()
-      .catch((caught: unknown) => {
+    let unsubscribe: (() => void) | null = null;
+
+    const load = async () => {
+      try {
+        const loaded = await refreshInterviews();
+
+        for (const interview of loaded) {
+          const latestJob = await getLatestInterviewJob(interview.id);
+          if (
+            latestJob &&
+            (latestJob.status === "queued" || latestJob.status === "running")
+          ) {
+            setActiveInterview(interview);
+            setJobEvent(latestJob);
+
+            const startedAt = latestJob.started_at
+              ? new Date(latestJob.started_at)
+              : latestJob.created_at
+                ? new Date(latestJob.created_at)
+                : new Date();
+
+            setProcessingStartedAt(startedAt);
+            setElapsedSeconds((Date.now() - startedAt.getTime()) / 1000);
+
+            unsubscribe = subscribeToJob(
+              latestJob.job_id,
+              (nextEvent) => {
+                setJobEvent(nextEvent);
+                if (nextEvent.status === "completed") {
+                  void refreshInterviews();
+                }
+              },
+              (socketError) => setJobError(socketError.message),
+            );
+            break;
+          }
+        }
+      } catch (caught: unknown) {
         setError(caught instanceof Error ? caught.message : "Unable to load interviews.");
-      })
-      .finally(() => setIsLoading(false));
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    void load();
+
+    return () => unsubscribe?.();
   }, []);
+
+  useEffect(() => {
+    if (!processingStartedAt || !jobEvent || jobEvent.status === "completed" || jobEvent.status === "failed") {
+      return;
+    }
+
+    const updateElapsed = () => {
+      setElapsedSeconds((Date.now() - processingStartedAt.getTime()) / 1000);
+    };
+
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [processingStartedAt, jobEvent?.status]);
 
   const readyCount = useMemo(
     () => interviews.filter((item) => item.artifact_root_path).length,
@@ -199,6 +333,33 @@ export default function App() {
     void audio.play();
   };
 
+  const handleDeleteInterview = async () => {
+    if (!deleteTarget) return;
+
+    setIsDeleting(true);
+    setDeleteError(null);
+
+    try {
+      await deleteInterview(deleteTarget.id);
+      setInterviews((current) =>
+        current.filter((interview) => interview.id !== deleteTarget.id),
+      );
+
+      if (activeInterview?.id === deleteTarget.id) {
+        setActiveInterview(null);
+        setJobEvent(null);
+      }
+
+      setDeleteTarget(null);
+    } catch (caught: unknown) {
+      setDeleteError(
+        caught instanceof Error ? caught.message : "Unable to delete interview.",
+      );
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const closeUpload = () => {
     if (isSubmitting) return;
     setIsUploadOpen(false);
@@ -230,6 +391,9 @@ export default function App() {
 
       const processResult = await processInterview(interview.id);
 
+      const startedAt = new Date();
+      setProcessingStartedAt(startedAt);
+      setElapsedSeconds(0);
       setActiveInterview(interview);
       setJobEvent({
         job_id: processResult.job_id,
@@ -642,36 +806,75 @@ export default function App() {
               <div className="processing-kicker">
                 {activeInterview.company} · Round {activeInterview.sequence_number}
               </div>
+
               <div className="processing-title-row">
                 <div>
                   <h2>
                     {jobEvent.status === "completed"
                       ? "Interview ready"
-                      : "Processing interview"}
+                      : jobEvent.status === "failed"
+                        ? "Processing failed"
+                        : "Processing interview"}
                   </h2>
                   <p>{jobEvent.message ?? `${stageLabel(jobEvent.stage)} in progress`}</p>
                 </div>
+
                 <strong>{Math.round(jobEvent.progress_percent)}%</strong>
               </div>
+
               <div className="progress-track">
-                <div className="progress-value" style={{ width: `${jobEvent.progress_percent}%` }} />
+                <div
+                  className="progress-value"
+                  style={{ width: `${jobEvent.progress_percent}%` }}
+                />
               </div>
-              <div className="stage-row">
-                {["Preprocessing", "Transcription", "Diarization", "Alignment", "Export"].map(
-                  (stage) => (
-                    <span
-                      key={stage}
-                      className={
-                        stage.toLowerCase() === jobEvent.stage
-                          ? "stage-chip stage-chip-active"
-                          : "stage-chip"
-                      }
-                    >
-                      {stage}
+
+              <div className="processing-footer">
+                <div className="stage-row">
+                  {PROCESSING_STAGES.map((stage) => {
+                    const state = stageState(stage, jobEvent.stage, jobEvent.status);
+
+                    return (
+                      <span
+                        key={stage}
+                        className={`stage-chip ${
+                          state === "active"
+                            ? "stage-chip-active"
+                            : state === "completed"
+                              ? "stage-chip-completed"
+                              : ""
+                        }`}
+                      >
+                        {stageLabel(stage)}
+                        {state === "completed" && <span className="stage-check">✓</span>}
+                      </span>
+                    );
+                  })}
+                </div>
+
+                <div className="processing-timing">
+                  <div className="processing-timer">
+                    <span className="timer-icon">◷</span>
+                    <span>
+                      Elapsed <strong>{formatElapsed(elapsedSeconds)}</strong>
                     </span>
-                  ),
-                )}
+                  </div>
+
+                  {processingStartedAt && (
+                    <span className="processing-started">
+                      Started at {formatClockTime(processingStartedAt)}
+                    </span>
+                  )}
+                </div>
               </div>
+
+              {jobEvent.status !== "completed" && jobEvent.status !== "failed" && (
+                <div className="processing-alive">
+                  <span className="alive-dot" />
+                  Processing is active. The timer continues even while the stage percentage is unchanged.
+                </div>
+              )}
+
               {jobError && <div className="inline-error">{jobError}</div>}
             </div>
           </section>
@@ -726,16 +929,31 @@ export default function App() {
                 <span>Interview</span>
                 <span>Interviewer</span>
                 <span>Date</span>
+                <span>Duration</span>
                 <span>Status</span>
-                <span />
+                <span>Actions</span>
               </div>
 
               {interviews.map((interview) => (
-                <button
+                <div
                   className="table-row interview-row"
                   key={interview.id}
-                  type="button"
-                  onClick={() => void openTranscript(interview)}
+                  role={interview.artifact_root_path ? "button" : undefined}
+                  tabIndex={interview.artifact_root_path ? 0 : -1}
+                  onClick={() => {
+                    if (interview.artifact_root_path) {
+                      void openTranscript(interview);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (
+                      interview.artifact_root_path &&
+                      (event.key === "Enter" || event.key === " ")
+                    ) {
+                      event.preventDefault();
+                      void openTranscript(interview);
+                    }
+                  }}
                 >
                   <span className="interview-primary">
                     <span className="company-avatar">
@@ -750,24 +968,166 @@ export default function App() {
                   </span>
                   <span>{interview.recruiter_or_interviewer}</span>
                   <span>{formatDate(interview.interview_datetime)}</span>
-                  <span>
-                    <span
-                      className={
-                        interview.artifact_root_path
-                          ? "status-pill status-ready"
-                          : "status-pill status-pending"
-                      }
+                  <span className="duration-cell">
+                    <svg
+                      aria-hidden="true"
+                      className="duration-icon"
+                      viewBox="0 0 24 24"
                     >
-                      {statusLabel(interview)}
-                    </span>
+                      <circle cx="12" cy="12" r="8.5" />
+                      <path d="M12 7.5v5l3.25 2" />
+                    </svg>
+                    {formatDuration(interview.duration_seconds)}
                   </span>
-                  <span className="row-arrow">→</span>
-                </button>
+                  <span>
+                    {activeInterview?.id === interview.id &&
+                    jobEvent &&
+                    jobEvent.status !== "completed" ? (
+                      <span className="status-stack">
+                        <span className="status-pill status-processing">
+                          Processing
+                        </span>
+                        <small>{Math.round(jobEvent.progress_percent)}% complete</small>
+                      </span>
+                    ) : (
+                      <span
+                        className={
+                          interview.artifact_root_path
+                            ? "status-pill status-ready"
+                            : "status-pill status-pending"
+                        }
+                      >
+                        {statusLabel(interview)}
+                      </span>
+                    )}
+                  </span>
+                  <span className="row-actions">
+                    {interview.artifact_root_path && (
+                      <button
+                        className="row-icon-button"
+                        type="button"
+                        aria-label={`Open ${interview.company} interview`}
+                        title="Open interview"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void openTranscript(interview);
+                        }}
+                      >
+                        <svg aria-hidden="true" viewBox="0 0 24 24">
+                          <path d="M2.8 12s3.3-5.5 9.2-5.5S21.2 12 21.2 12 17.9 17.5 12 17.5 2.8 12 2.8 12Z" />
+                          <circle cx="12" cy="12" r="2.6" />
+                        </svg>
+                      </button>
+                    )}
+
+                    <button
+                      className="row-icon-button menu-icon-button"
+                      type="button"
+                      aria-label="More actions"
+                      title="More actions"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <svg aria-hidden="true" viewBox="0 0 24 24">
+                        <circle cx="12" cy="5" r="1.4" />
+                        <circle cx="12" cy="12" r="1.4" />
+                        <circle cx="12" cy="19" r="1.4" />
+                      </svg>
+                    </button>
+
+                    <button
+                      className="delete-row-button"
+                      type="button"
+                      aria-label={`Delete ${interview.company} interview`}
+                      title="Delete interview"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setDeleteError(null);
+                        setDeleteTarget(interview);
+                      }}
+                    >
+                      <svg aria-hidden="true" viewBox="0 0 24 24">
+                        <path d="M4.5 7h15" />
+                        <path d="M9 7V4.8h6V7" />
+                        <path d="M7 7l.7 12h8.6L17 7" />
+                        <path d="M10 10.5v5.5M14 10.5v5.5" />
+                      </svg>
+                    </button>
+                  </span>
+                </div>
               ))}
             </div>
           )}
         </section>
       </main>
+
+      {deleteTarget && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="delete-modal" role="dialog" aria-modal="true">
+            <button
+              className="delete-modal-close"
+              type="button"
+              aria-label="Close delete confirmation"
+              disabled={isDeleting}
+              onClick={() => {
+                setDeleteTarget(null);
+                setDeleteError(null);
+              }}
+            >
+              ×
+            </button>
+
+            <div className="delete-modal-heading">
+              <div className="delete-modal-icon">
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  <path d="M4.5 7h15" />
+                  <path d="M9 7V4.8h6V7" />
+                  <path d="M7 7l.7 12h8.6L17 7" />
+                  <path d="M10 10.5v5.5M14 10.5v5.5" />
+                </svg>
+              </div>
+
+              <div>
+                <h2>Delete interview?</h2>
+                <p>This action cannot be undone.</p>
+              </div>
+            </div>
+
+            <p className="delete-warning">
+              This will permanently delete <strong>{deleteTarget.company}</strong>{" "}
+              Round {deleteTarget.sequence_number}, including its transcripts,
+              AI reviews, processing jobs, generated files, and any uploaded
+              recording managed by Interview Intelligence.
+            </p>
+            <p className="delete-safe-note">
+              Original recordings outside Interview Intelligence will not be deleted.
+            </p>
+
+            {deleteError && <div className="inline-error">{deleteError}</div>}
+
+            <div className="modal-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={isDeleting}
+                onClick={() => {
+                  setDeleteTarget(null);
+                  setDeleteError(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="danger-button"
+                type="button"
+                disabled={isDeleting}
+                onClick={() => void handleDeleteInterview()}
+              >
+                {isDeleting ? "Deleting…" : "Delete interview"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isUploadOpen && (
         <div className="modal-backdrop" role="presentation">

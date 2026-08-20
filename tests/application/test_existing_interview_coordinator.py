@@ -41,7 +41,20 @@ class StubPipeline:
     def process(
         self,
         request: InterviewProcessingRequest,
+        progress_callback=None,
     ) -> InterviewProcessingResult:
+        if progress_callback is not None:
+            from interview_intelligence.domain.enums import JobStage
+
+            progress_callback(JobStage.PREPROCESSING, 10, 0, "Canonical audio prepared")
+            progress_callback(JobStage.TRANSCRIPTION, 12, 0, "Transcribing interview")
+            progress_callback(JobStage.TRANSCRIPTION, 70, 120, "Transcription complete")
+            progress_callback(JobStage.DIARIZATION, 72, 120, "Identifying speakers")
+            progress_callback(JobStage.DIARIZATION, 88, 120, "Speaker diarization complete")
+            progress_callback(JobStage.ALIGNMENT, 90, 120, "Aligning speakers to transcript")
+            progress_callback(JobStage.ALIGNMENT, 94, 120, "Speaker alignment complete")
+            progress_callback(JobStage.EXPORT, 96, 120, "Exporting artifacts")
+
         root = self.output_dir / "result"
         root.mkdir(parents=True, exist_ok=True)
         metadata = self.inspector.inspect(request.source_audio)

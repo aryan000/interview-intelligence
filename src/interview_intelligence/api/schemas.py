@@ -26,6 +26,7 @@ class InterviewResponse(BaseModel):
     target_level: str | None
     source_audio_path: str
     artifact_root_path: str | None
+    duration_seconds: float | None = None
 
 
 class JobResponse(BaseModel):
@@ -38,6 +39,10 @@ class JobResponse(BaseModel):
     total_audio_seconds: float
     message: str | None
     error_message: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class ProcessInterviewResponse(BaseModel):

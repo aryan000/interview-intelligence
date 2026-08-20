@@ -73,6 +73,14 @@ class InterviewRepository:
 
         return [InterviewRecord.model_validate(dict(row)) for row in rows]
 
+    def delete(self, interview_id: UUID) -> bool:
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM interviews WHERE id = ?",
+                (str(interview_id),),
+            )
+        return cursor.rowcount > 0
+
     def set_artifact_root(self, interview_id: UUID, artifact_root_path: str) -> None:
         now = _utcnow()
         with self.database.connect() as connection:

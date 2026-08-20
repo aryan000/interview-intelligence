@@ -53,40 +53,26 @@ class ExistingInterviewProcessingCoordinator:
                 message="Preparing canonical audio",
             )
 
-            result = self.pipeline.process(request)
+            def report_progress(
+                stage: JobStage,
+                progress_percent: float,
+                processed_audio_seconds: float,
+                message: str,
+            ) -> None:
+                self.job_service.update_progress(
+                    job_id,
+                    stage,
+                    progress_percent=progress_percent,
+                    processed_audio_seconds=processed_audio_seconds,
+                    total_audio_seconds=source_metadata.duration_seconds,
+                    message=message,
+                )
 
-            self.job_service.update_progress(
-                job_id,
-                JobStage.TRANSCRIPTION,
-                progress_percent=70,
-                processed_audio_seconds=result.prepared_metadata.duration_seconds,
-                total_audio_seconds=result.prepared_metadata.duration_seconds,
-                message="Transcription complete",
+            result = self.pipeline.process(
+                request,
+                progress_callback=report_progress,
             )
-            self.job_service.update_progress(
-                job_id,
-                JobStage.DIARIZATION,
-                progress_percent=88,
-                processed_audio_seconds=result.prepared_metadata.duration_seconds,
-                total_audio_seconds=result.prepared_metadata.duration_seconds,
-                message="Speaker diarization complete",
-            )
-            self.job_service.update_progress(
-                job_id,
-                JobStage.ALIGNMENT,
-                progress_percent=94,
-                processed_audio_seconds=result.prepared_metadata.duration_seconds,
-                total_audio_seconds=result.prepared_metadata.duration_seconds,
-                message="Speaker alignment complete",
-            )
-            self.job_service.update_progress(
-                job_id,
-                JobStage.EXPORT,
-                progress_percent=99,
-                processed_audio_seconds=result.prepared_metadata.duration_seconds,
-                total_audio_seconds=result.prepared_metadata.duration_seconds,
-                message="Artifacts exported",
-            )
+
 
             self.interview_repository.set_artifact_root(
                 interview.id,

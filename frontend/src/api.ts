@@ -53,6 +53,31 @@ export async function analyzeInterview(
   return response.json() as Promise<InterviewReview>;
 }
 
+export async function deleteInterview(interviewId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/interviews/${interviewId}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    throw await responseError(response);
+  }
+}
+
+export async function getLatestInterviewJob(
+  interviewId: string,
+): Promise<JobEvent | null> {
+  const response = await fetch(`${API_BASE}/interviews/${interviewId}/jobs/latest`);
+
+  if (response.status === 404) return null;
+  if (!response.ok) throw await responseError(response);
+
+  const job = await response.json() as JobEvent & { id?: string };
+  return {
+    ...job,
+    job_id: job.job_id ?? job.id ?? "",
+  };
+}
+
 export function getAudioUrl(interviewId: string): string {
   return `${API_BASE}/interviews/${interviewId}/audio`;
 }

@@ -58,6 +58,7 @@ def create_app(
     app.state.interviews = interviews
     app.state.jobs = jobs
     app.state.job_event_broker = event_broker
+    app.state.recordings_root = resolved_output_root
     app.state.upload_dir = upload_dir
 
     def coordinator_factory() -> ExistingInterviewProcessingCoordinator:

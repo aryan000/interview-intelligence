@@ -34,13 +34,16 @@ from interview_intelligence.api.schemas import (
 from interview_intelligence.domain.enums import JobStatus
 from interview_intelligence.jobs.broker import JobEventBroker
 from interview_intelligence.jobs.service import ProcessingJobService
-from interview_intelligence.persistence.models import InterviewRecord
+from interview_intelligence.persistence.models import InterviewRecord, ProcessingJobRecord
 from interview_intelligence.persistence.repositories import ProcessingJobRepository
 
 _ALLOWED_AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac"}
 
 
-def _to_interview_response(record: InterviewRecord) -> InterviewResponse:
+def _to_interview_response(
+    record: InterviewRecord,
+    duration_seconds: float | None = None,
+) -> InterviewResponse:
     return InterviewResponse(
         id=record.id,
         company=record.company,
@@ -51,6 +54,7 @@ def _to_interview_response(record: InterviewRecord) -> InterviewResponse:
         target_level=record.target_level,
         source_audio_path=record.source_audio_path,
         artifact_root_path=record.artifact_root_path,
+        duration_seconds=duration_seconds,
     )
 
 
@@ -65,6 +69,42 @@ def _require_interview(
             detail="Interview not found",
         )
     return record
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _delete_managed_path(path: Path, root: Path) -> None:
+    if not _is_within(path, root):
+        return
+
+    if path.is_dir():
+        shutil.rmtree(path)
+    elif path.is_file():
+        path.unlink()
+
+
+def _to_job_response(job: ProcessingJobRecord) -> JobResponse:
+    return JobResponse(
+        id=job.id,
+        interview_id=job.interview_id,
+        status=job.status,
+        stage=job.stage,
+        progress_percent=job.progress_percent,
+        processed_audio_seconds=job.processed_audio_seconds,
+        total_audio_seconds=job.total_audio_seconds,
+        message=job.message,
+        error_message=job.error_message,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
 
 
 def build_router() -> APIRouter:
@@ -156,10 +196,23 @@ def build_router() -> APIRouter:
         response_model=list[InterviewResponse],
     )
     def list_interviews(request: Request) -> list[InterviewResponse]:
-        return [
-            _to_interview_response(record)
-            for record in interviews(request).list_all()
-        ]
+        responses: list[InterviewResponse] = []
+
+        for record in interviews(request).list_all():
+            latest_job = jobs(request).latest_for_interview(record.id)
+            duration_seconds = (
+                latest_job.total_audio_seconds
+                if latest_job is not None
+                else None
+            )
+            responses.append(
+                _to_interview_response(
+                    record,
+                    duration_seconds=duration_seconds,
+                )
+            )
+
+        return responses
 
     @router.get(
         "/interviews/{interview_id}",
@@ -170,6 +223,49 @@ def build_router() -> APIRouter:
         request: Request,
     ) -> InterviewResponse:
         return _to_interview_response(_require_interview(interview_id, request))
+
+    @router.delete(
+        "/interviews/{interview_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def delete_interview(
+        interview_id: UUID,
+        request: Request,
+    ) -> None:
+        record = _require_interview(interview_id, request)
+
+        latest = jobs(request).latest_for_interview(interview_id)
+        if latest is not None and latest.status in {
+            JobStatus.QUEUED,
+            JobStatus.RUNNING,
+        }:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Cannot delete an interview while processing is active",
+            )
+
+        recordings_root = cast(Path, request.app.state.recordings_root)
+        upload_dir = cast(Path, request.app.state.upload_dir)
+
+        artifact_root = (
+            Path(record.artifact_root_path)
+            if record.artifact_root_path is not None
+            else None
+        )
+        source_audio = Path(record.source_audio_path)
+
+        if not interviews(request).delete(interview_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Interview not found",
+            )
+
+        if artifact_root is not None:
+            _delete_managed_path(artifact_root, recordings_root)
+
+        # Only remove uploaded copies managed by this application.
+        # External/original recordings are intentionally left untouched.
+        _delete_managed_path(source_audio, upload_dir)
 
     @router.post(
         "/interviews/{interview_id}/process",
@@ -236,17 +332,24 @@ def build_router() -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Processing job not found",
             )
-        return JobResponse(
-            id=job.id,
-            interview_id=job.interview_id,
-            status=job.status,
-            stage=job.stage,
-            progress_percent=job.progress_percent,
-            processed_audio_seconds=job.processed_audio_seconds,
-            total_audio_seconds=job.total_audio_seconds,
-            message=job.message,
-            error_message=job.error_message,
-        )
+        return _to_job_response(job)
+
+    @router.get(
+        "/interviews/{interview_id}/jobs/latest",
+        response_model=JobResponse,
+    )
+    def get_latest_interview_job(
+        interview_id: UUID,
+        request: Request,
+    ) -> JobResponse:
+        _require_interview(interview_id, request)
+        job = jobs(request).latest_for_interview(interview_id)
+        if job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Processing job not found",
+            )
+        return _to_job_response(job)
 
     @router.websocket("/jobs/{job_id}/events")
     async def job_events(websocket: WebSocket, job_id: UUID) -> None:

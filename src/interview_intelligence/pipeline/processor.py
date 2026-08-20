@@ -1,5 +1,6 @@
 import time
 from collections import defaultdict
+from collections.abc import Callable
 
 from interview_intelligence.audio.inspector import AudioInspector
 from interview_intelligence.audio.preparer import AudioPreparer
@@ -8,6 +9,7 @@ from interview_intelligence.diarization.pyannote_engine import (
     PyannoteDiarizationEngine,
 )
 from interview_intelligence.diarization.roles import SpeakerRoleMapper
+from interview_intelligence.domain.enums import JobStage
 from interview_intelligence.domain.models import TranscriptSegment
 from interview_intelligence.engines.base import (
     TranscriptionEngine,
@@ -22,6 +24,8 @@ from interview_intelligence.pipeline.models import (
 )
 from interview_intelligence.quality.detector import TranscriptQualityDetector
 from interview_intelligence.transcription.sanitizer import TranscriptTimelineSanitizer
+
+PipelineProgressCallback = Callable[[JobStage, float, float, str], None]
 
 
 class InterviewProcessingPipeline:
@@ -52,6 +56,7 @@ class InterviewProcessingPipeline:
     def process(
         self,
         request: InterviewProcessingRequest,
+        progress_callback: PipelineProgressCallback | None = None,
     ) -> InterviewProcessingResult:
         total_started = time.perf_counter()
 
@@ -65,6 +70,20 @@ class InterviewProcessingPipeline:
             request.source_audio,
             prepared_path,
         )
+        self._report_progress(
+            progress_callback,
+            JobStage.PREPROCESSING,
+            10,
+            0,
+            "Canonical audio prepared",
+        )
+        self._report_progress(
+            progress_callback,
+            JobStage.TRANSCRIPTION,
+            12,
+            0,
+            "Transcribing interview",
+        )
 
         transcription_started = time.perf_counter()
         transcription = self.transcription_engine.transcribe(
@@ -76,6 +95,13 @@ class InterviewProcessingPipeline:
             )
         )
         transcription_seconds = time.perf_counter() - transcription_started
+        self._report_progress(
+            progress_callback,
+            JobStage.TRANSCRIPTION,
+            70,
+            preparation.prepared.duration_seconds,
+            "Transcription complete",
+        )
 
         sanitization = self.timeline_sanitizer.sanitize(
             transcription.segments,
@@ -85,12 +111,33 @@ class InterviewProcessingPipeline:
 
         quality_issues = self.quality_detector.detect(sanitized_segments)
 
+        self._report_progress(
+            progress_callback,
+            JobStage.DIARIZATION,
+            72,
+            preparation.prepared.duration_seconds,
+            "Identifying speakers",
+        )
         diarization_started = time.perf_counter()
         diarization = self.diarization_engine.diarize(
             prepared_path,
             num_speakers=request.num_speakers,
         )
         diarization_seconds = time.perf_counter() - diarization_started
+        self._report_progress(
+            progress_callback,
+            JobStage.DIARIZATION,
+            88,
+            preparation.prepared.duration_seconds,
+            "Speaker diarization complete",
+        )
+        self._report_progress(
+            progress_callback,
+            JobStage.ALIGNMENT,
+            90,
+            preparation.prepared.duration_seconds,
+            "Aligning speakers to transcript",
+        )
 
         aligned = self.speaker_aligner.align(
             sanitized_segments,
@@ -147,6 +194,21 @@ class InterviewProcessingPipeline:
             "timeline_clamped_segments": sanitization.clamped_segments,
         }
 
+        self._report_progress(
+            progress_callback,
+            JobStage.ALIGNMENT,
+            94,
+            preparation.prepared.duration_seconds,
+            "Speaker alignment complete",
+        )
+        self._report_progress(
+            progress_callback,
+            JobStage.EXPORT,
+            96,
+            preparation.prepared.duration_seconds,
+            "Exporting artifacts",
+        )
+
         self.exporter.export(
             request=request,
             paths=artifact_paths,
@@ -174,6 +236,17 @@ class InterviewProcessingPipeline:
             diarization_seconds=diarization_seconds,
             total_seconds=time.perf_counter() - total_started,
         )
+
+    @staticmethod
+    def _report_progress(
+        callback: PipelineProgressCallback | None,
+        stage: JobStage,
+        progress_percent: float,
+        processed_audio_seconds: float,
+        message: str,
+    ) -> None:
+        if callback is not None:
+            callback(stage, progress_percent, processed_audio_seconds, message)
 
     @staticmethod
     def _speaker_role(
