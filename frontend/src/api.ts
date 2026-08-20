@@ -2,6 +2,7 @@ import type {
   Interview,
   JobEvent,
   ProcessInterviewResponse,
+  TranscriptResponse,
 } from "./types";
 
 const API_BASE = "http://127.0.0.1:8000/api/v1";
@@ -15,6 +16,17 @@ export async function listInterviews(): Promise<Interview[]> {
   }
 
   return response.json() as Promise<Interview[]>;
+}
+
+export async function getTranscript(interviewId: string): Promise<TranscriptResponse> {
+  const response = await fetch(`${API_BASE}/interviews/${interviewId}/transcript`);
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Failed to load transcript (${response.status})`);
+  }
+
+  return response.json() as Promise<TranscriptResponse>;
 }
 
 export async function uploadInterview(input: {

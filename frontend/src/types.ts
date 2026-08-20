@@ -27,3 +27,15 @@ export type JobEvent = {
   message: string | null;
   occurred_at?: string;
 };
+
+export type TranscriptResponse = {
+  interview_id: string;
+  transcript: string;
+};
+
+export type TranscriptLine = {
+  start: string;
+  end: string;
+  speaker: string;
+  text: string;
+};

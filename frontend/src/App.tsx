@@ -1,12 +1,13 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import {
+  getTranscript,
   listInterviews,
   processInterview,
   subscribeToJob,
   uploadInterview,
 } from "./api";
-import type { Interview, JobEvent } from "./types";
+import type { Interview, JobEvent, TranscriptLine } from "./types";
 
 type UploadFormState = {
   company: string;
@@ -17,6 +18,8 @@ type UploadFormState = {
   targetLevel: string;
   audio: File | null;
 };
+
+type Screen = "workspace" | "transcript";
 
 const emptyUploadForm: UploadFormState = {
   company: "",
@@ -47,7 +50,34 @@ function stageLabel(stage: string): string {
     .join(" ");
 }
 
+function parseTranscript(raw: string): TranscriptLine[] {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^\[(.*?)\s*->\s*(.*?)\]\s+([^:]+):\s*(.*)$/);
+
+      if (!match) {
+        return {
+          start: "",
+          end: "",
+          speaker: "Unknown",
+          text: line,
+        };
+      }
+
+      return {
+        start: match[1],
+        end: match[2],
+        speaker: match[3].replace(/\s*\[QUALITY:.*?\]\s*$/, "").trim(),
+        text: match[4],
+      };
+    });
+}
+
 export default function App() {
+  const [screen, setScreen] = useState<Screen>("workspace");
   const [interviews, setInterviews] = useState<Interview[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +90,10 @@ export default function App() {
   const [activeInterview, setActiveInterview] = useState<Interview | null>(null);
   const [jobEvent, setJobEvent] = useState<JobEvent | null>(null);
   const [jobError, setJobError] = useState<string | null>(null);
+
+  const [transcriptLines, setTranscriptLines] = useState<TranscriptLine[]>([]);
+  const [isTranscriptLoading, setIsTranscriptLoading] = useState(false);
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
 
   const refreshInterviews = async (): Promise<Interview[]> => {
     const data = await listInterviews();
@@ -80,10 +114,30 @@ export default function App() {
     [interviews],
   );
 
-  const closeUpload = () => {
-    if (isSubmitting) {
+  const openTranscript = async (interview: Interview) => {
+    if (!interview.artifact_root_path) {
       return;
     }
+
+    setActiveInterview(interview);
+    setIsTranscriptLoading(true);
+    setTranscriptError(null);
+    setScreen("transcript");
+
+    try {
+      const response = await getTranscript(interview.id);
+      setTranscriptLines(parseTranscript(response.transcript));
+    } catch (caught: unknown) {
+      setTranscriptError(
+        caught instanceof Error ? caught.message : "Unable to load transcript.",
+      );
+    } finally {
+      setIsTranscriptLoading(false);
+    }
+  };
+
+  const closeUpload = () => {
+    if (isSubmitting) return;
     setIsUploadOpen(false);
     setSubmitError(null);
     setUploadForm(emptyUploadForm);
@@ -135,12 +189,8 @@ export default function App() {
 
           if (nextEvent.status === "completed") {
             void refreshInterviews().then((nextInterviews) => {
-              const refreshed = nextInterviews.find(
-                (item) => item.id === interview.id,
-              );
-              if (refreshed) {
-                setActiveInterview(refreshed);
-              }
+              const refreshed = nextInterviews.find((item) => item.id === interview.id);
+              if (refreshed) setActiveInterview(refreshed);
             });
           }
         },
@@ -154,6 +204,139 @@ export default function App() {
       setIsSubmitting(false);
     }
   };
+
+  if (screen === "transcript" && activeInterview) {
+    return (
+      <div className="app-shell">
+        <aside className="sidebar">
+          <div className="brand">
+            <div className="brand-mark">II</div>
+            <div>
+              <div className="brand-name">Interview Intelligence</div>
+              <div className="brand-subtitle">Private interview workspace</div>
+            </div>
+          </div>
+
+          <nav className="nav">
+            <button
+              className="nav-item"
+              type="button"
+              onClick={() => setScreen("workspace")}
+            >
+              <span className="nav-icon">◫</span>
+              Interviews
+            </button>
+            <button className="nav-item nav-item-active" type="button">
+              <span className="nav-icon">◌</span>
+              Transcript Studio
+            </button>
+          </nav>
+
+          <div className="sidebar-footer">
+            <div className="privacy-pill">Local-first</div>
+            <p>Your recordings stay on this machine unless you explicitly share them.</p>
+          </div>
+        </aside>
+
+        <main className="main transcript-main">
+          <button className="back-button" type="button" onClick={() => setScreen("workspace")}>
+            ← Back to interviews
+          </button>
+
+          <header className="transcript-header">
+            <div>
+              <p className="eyebrow">TRANSCRIPT STUDIO</p>
+              <h1>{activeInterview.company}</h1>
+              <p className="page-subtitle">
+                {activeInterview.role ?? "Interview"} · Round {activeInterview.sequence_number} ·{" "}
+                {activeInterview.recruiter_or_interviewer}
+              </p>
+            </div>
+
+            <div className="transcript-meta-card">
+              <span>{formatDate(activeInterview.interview_datetime)}</span>
+              <strong>{transcriptLines.length} segments</strong>
+            </div>
+          </header>
+
+          <section className="transcript-layout">
+            <div className="transcript-panel">
+              <div className="transcript-toolbar">
+                <div>
+                  <h2>Conversation</h2>
+                  <p>Speaker-labelled transcript with timeline context.</p>
+                </div>
+                <div className="transcript-status">Ready</div>
+              </div>
+
+              {isTranscriptLoading ? (
+                <div className="empty-state">Loading transcript…</div>
+              ) : transcriptError ? (
+                <div className="empty-state error-state">{transcriptError}</div>
+              ) : (
+                <div className="transcript-list">
+                  {transcriptLines.map((line, index) => {
+                    const isCandidate = line.speaker.toLowerCase().includes("candidate");
+                    const isInterviewer = line.speaker.toLowerCase().includes("interviewer");
+
+                    return (
+                      <article
+                        className={`transcript-segment ${
+                          isCandidate ? "candidate-segment" : ""
+                        }`}
+                        key={`${line.start}-${index}`}
+                      >
+                        <div className="segment-time">{line.start}</div>
+                        <div className="segment-content">
+                          <div className="segment-speaker-row">
+                            <span
+                              className={`speaker-pill ${
+                                isCandidate
+                                  ? "speaker-candidate"
+                                  : isInterviewer
+                                    ? "speaker-interviewer"
+                                    : "speaker-unknown"
+                              }`}
+                            >
+                              {line.speaker}
+                            </span>
+                            {line.end && <span className="segment-end">to {line.end}</span>}
+                          </div>
+                          <p>{line.text}</p>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <aside className="insight-panel">
+              <div className="insight-section">
+                <span className="insight-label">INTERVIEW</span>
+                <strong>{activeInterview.company}</strong>
+                <p>{activeInterview.role ?? "Interview role not specified"}</p>
+              </div>
+
+              <div className="insight-section">
+                <span className="insight-label">INTERVIEWER</span>
+                <strong>{activeInterview.recruiter_or_interviewer}</strong>
+                <p>Round {activeInterview.sequence_number}</p>
+              </div>
+
+              <div className="insight-section insight-coming">
+                <span className="insight-label">AI REVIEW</span>
+                <strong>Coming next</strong>
+                <p>
+                  Questions, answer quality, strengths, gaps and expected level.
+                </p>
+              </div>
+            </aside>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -193,11 +376,7 @@ export default function App() {
             </p>
           </div>
 
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => setIsUploadOpen(true)}
-          >
+          <button className="primary-button" type="button" onClick={() => setIsUploadOpen(true)}>
             <span>＋</span>
             Add interview
           </button>
@@ -216,18 +395,12 @@ export default function App() {
                       ? "Interview ready"
                       : "Processing interview"}
                   </h2>
-                  <p>
-                    {jobEvent.message ??
-                      `${stageLabel(jobEvent.stage)} in progress`}
-                  </p>
+                  <p>{jobEvent.message ?? `${stageLabel(jobEvent.stage)} in progress`}</p>
                 </div>
                 <strong>{Math.round(jobEvent.progress_percent)}%</strong>
               </div>
               <div className="progress-track">
-                <div
-                  className="progress-value"
-                  style={{ width: `${jobEvent.progress_percent}%` }}
-                />
+                <div className="progress-value" style={{ width: `${jobEvent.progress_percent}%` }} />
               </div>
               <div className="stage-row">
                 {["Preprocessing", "Transcription", "Diarization", "Alignment", "Export"].map(
@@ -304,7 +477,12 @@ export default function App() {
               </div>
 
               {interviews.map((interview) => (
-                <button className="table-row interview-row" key={interview.id} type="button">
+                <button
+                  className="table-row interview-row"
+                  key={interview.id}
+                  type="button"
+                  onClick={() => void openTranscript(interview)}
+                >
                   <span className="interview-primary">
                     <span className="company-avatar">
                       {interview.company.slice(0, 1).toUpperCase()}
@@ -316,10 +494,8 @@ export default function App() {
                       </small>
                     </span>
                   </span>
-
                   <span>{interview.recruiter_or_interviewer}</span>
                   <span>{formatDate(interview.interview_datetime)}</span>
-
                   <span>
                     <span
                       className={
@@ -331,7 +507,6 @@ export default function App() {
                       {statusLabel(interview)}
                     </span>
                   </span>
-
                   <span className="row-arrow">→</span>
                 </button>
               ))}
@@ -349,9 +524,7 @@ export default function App() {
                 <h2>Add interview recording</h2>
                 <p>Upload the recording and we'll process it locally.</p>
               </div>
-              <button className="icon-button" type="button" onClick={closeUpload}>
-                ×
-              </button>
+              <button className="icon-button" type="button" onClick={closeUpload}>×</button>
             </div>
 
             <form className="upload-form" onSubmit={handleUploadSubmit}>
@@ -367,114 +540,53 @@ export default function App() {
                   }
                 />
                 <div className="file-drop-icon">↑</div>
-                <strong>
-                  {uploadForm.audio?.name ?? "Choose interview recording"}
-                </strong>
+                <strong>{uploadForm.audio?.name ?? "Choose interview recording"}</strong>
                 <span>MP3, WAV, M4A or AAC</span>
               </label>
 
               <div className="form-grid">
                 <label>
                   <span>Company</span>
-                  <input
-                    required
-                    value={uploadForm.company}
-                    onChange={(event) =>
-                      setUploadForm((current) => ({
-                        ...current,
-                        company: event.target.value,
-                      }))
-                    }
-                    placeholder="e.g. Navi"
-                  />
+                  <input required value={uploadForm.company} onChange={(event) =>
+                    setUploadForm((current) => ({ ...current, company: event.target.value }))
+                  } placeholder="e.g. Navi" />
                 </label>
-
                 <label>
                   <span>Interviewer / recruiter</span>
-                  <input
-                    required
-                    value={uploadForm.interviewer}
-                    onChange={(event) =>
-                      setUploadForm((current) => ({
-                        ...current,
-                        interviewer: event.target.value,
-                      }))
-                    }
-                    placeholder="e.g. Sachin"
-                  />
+                  <input required value={uploadForm.interviewer} onChange={(event) =>
+                    setUploadForm((current) => ({ ...current, interviewer: event.target.value }))
+                  } placeholder="e.g. Sachin" />
                 </label>
-
                 <label>
                   <span>Date & time</span>
-                  <input
-                    required
-                    type="datetime-local"
-                    value={uploadForm.datetime}
-                    onChange={(event) =>
-                      setUploadForm((current) => ({
-                        ...current,
-                        datetime: event.target.value,
-                      }))
-                    }
-                  />
+                  <input required type="datetime-local" value={uploadForm.datetime} onChange={(event) =>
+                    setUploadForm((current) => ({ ...current, datetime: event.target.value }))
+                  } />
                 </label>
-
                 <label>
                   <span>Round</span>
-                  <input
-                    min={1}
-                    required
-                    type="number"
-                    value={uploadForm.sequence}
-                    onChange={(event) =>
-                      setUploadForm((current) => ({
-                        ...current,
-                        sequence: Number(event.target.value),
-                      }))
-                    }
-                  />
+                  <input min={1} required type="number" value={uploadForm.sequence} onChange={(event) =>
+                    setUploadForm((current) => ({ ...current, sequence: Number(event.target.value) }))
+                  } />
                 </label>
-
                 <label>
                   <span>Role</span>
-                  <input
-                    value={uploadForm.role}
-                    onChange={(event) =>
-                      setUploadForm((current) => ({
-                        ...current,
-                        role: event.target.value,
-                      }))
-                    }
-                    placeholder="Engineering Manager"
-                  />
+                  <input value={uploadForm.role} onChange={(event) =>
+                    setUploadForm((current) => ({ ...current, role: event.target.value }))
+                  } placeholder="Engineering Manager" />
                 </label>
-
                 <label>
                   <span>Target level</span>
-                  <input
-                    value={uploadForm.targetLevel}
-                    onChange={(event) =>
-                      setUploadForm((current) => ({
-                        ...current,
-                        targetLevel: event.target.value,
-                      }))
-                    }
-                    placeholder="Optional"
-                  />
+                  <input value={uploadForm.targetLevel} onChange={(event) =>
+                    setUploadForm((current) => ({ ...current, targetLevel: event.target.value }))
+                  } placeholder="Optional" />
                 </label>
               </div>
 
               {submitError && <div className="inline-error">{submitError}</div>}
 
               <div className="modal-actions">
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={closeUpload}
-                  disabled={isSubmitting}
-                >
-                  Cancel
-                </button>
+                <button className="secondary-button" type="button" onClick={closeUpload} disabled={isSubmitting}>Cancel</button>
                 <button className="primary-button" type="submit" disabled={isSubmitting}>
                   {isSubmitting ? "Starting…" : "Create & process"}
                 </button>
