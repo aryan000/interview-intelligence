@@ -5,11 +5,14 @@ description = "Local-first interview transcription and feedback intelligence pla
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
+    "fastapi>=0.141.1",
     "mlx-whisper>=0.4.3",
     "pyannote-audio>=4.0.7",
     "pydantic>=2.0,<3.0",
     "pydantic-settings>=2.0,<3.0",
+    "python-multipart>=0.0.32",
     "structlog>=24.0,<26.0",
+    "uvicorn[standard]>=0.52.4",
 ]
 
 [dependency-groups]
