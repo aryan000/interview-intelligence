@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+.env.local
+*.pem
+*.key
+
+# IDE
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Type checking / linting
+.mypy_cache/
+.ruff_cache/
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Models
+models/
+*.bin
+*.safetensors
+
+# Local application data
+data/
+recordings/
+transcripts/
+outputs/
+tmp/
+
+# Audio/video
+*.aac
+*.m4a
+*.mp3
+*.wav
+*.mp4
+*.mov
+
+# SQLite
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+logs/
