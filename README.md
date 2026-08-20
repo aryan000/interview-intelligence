@@ -1,78 +1,154 @@
-# Interview Intelligence
+# Interview Intelligence 🎙️
 
-A **local-first interview analysis workspace** for turning interview recordings into searchable, speaker-labelled transcripts and structured AI feedback.
+<p align="center">
+  <strong>Turn technical interviews into a private, searchable feedback loop.</strong>
+</p>
 
-Interview Intelligence keeps the expensive audio-processing pipeline on your machine, gives you synchronized transcript/audio playback, and can optionally use an LLM for question-by-question interview review.
+<p align="center">
+  Record → Transcribe locally → Review → Improve across interviews
+</p>
 
-> **Project status:** active development / local-first MVP.  
-> The current implementation has been validated primarily on **macOS + Apple Silicon**.
+<p align="center">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi&logoColor=white">
+  <img alt="React" src="https://img.shields.io/badge/React-Frontend-61DAFB?logo=react&logoColor=111">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-UI-3178C6?logo=typescript&logoColor=white">
+  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-Local%20Storage-003B57?logo=sqlite&logoColor=white">
+  <img alt="OpenAI" src="https://img.shields.io/badge/OpenAI-AI%20Review-412991?logo=openai&logoColor=white">
+  <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple%20Silicon-Optimized-111111?logo=apple&logoColor=white">
+</p>
 
----
-
-## What it does
-
-Upload an interview recording and Interview Intelligence can:
-
-- normalize audio into a canonical format;
-- transcribe long recordings locally;
-- identify and label interviewer/candidate speakers;
-- align speaker turns with transcript timestamps;
-- detect obvious transcript quality problems;
-- persist jobs so long-running processing survives browser/frontend restarts;
-- show live processing state and elapsed time;
-- play the original recording and seek by clicking transcript segments;
-- download the generated transcript;
-- generate a structured AI interview review;
-- score individual questions and highlight strengths, gaps, and stronger answers;
-- store interviews, processing history, transcripts, review artifacts, and metadata locally;
-- delete an interview and its app-managed artifacts safely.
-
-The long-term goal is not merely "transcribe an interview." It is to build **cross-interview intelligence** that identifies recurring patterns, progress, weaknesses, and what to practice next.
+> **Status:** Active development · Local-first MVP  
+> **Best-tested environment:** macOS + Apple Silicon
 
 ---
 
-## Screens
+## Why this exists
 
-The current product includes:
+Interview preparation is surprisingly fragmented.
 
-- **Interview Workspace** — all interview rounds, status, duration, processing progress, search and actions.
-- **Transcript Studio** — synchronized audio playback plus speaker-labelled transcript.
-- **AI Review** — overall hiring signal, evidence summary, coaching guidance, question-by-question review and level signal.
-- **Collapsible navigation** — more horizontal room for transcript and analysis content.
+A typical post-interview workflow looks like this:
+
+1. replay the recording;
+2. convert the file if needed;
+3. find a transcription tool that can handle a 60–90 minute interview;
+4. manually identify interviewer/candidate turns;
+5. paste the transcript into an AI assistant;
+6. re-explain the company, role and round;
+7. ask for feedback;
+8. lose that feedback inside another chat.
+
+**Interview Intelligence turns that into one workflow.**
+
+It keeps transcription and diarization local, preserves the original interview timeline, gives you synchronized audio + transcript playback, and can optionally generate structured AI feedback.
+
+The long-term goal is bigger than transcription: **cross-interview intelligence** that identifies recurring weaknesses, strengths, trends and what to practice next.
 
 ---
 
-## Architecture at a glance
+## Product preview
+
+### Demo
+
+<p align="center">
+  <img src="docs/images/demo.png" alt="Demo" width="100%">
+</p>
+
+
+
+---
+
+## Features
+
+### 🎙️ Local transcription
+- High-quality local transcription using MLX Whisper
+- Optimized for Apple Silicon
+- Supports long-form interview recordings
+- Preserves timestamps and original timeline
+
+### 👥 Speaker diarization
+- Speaker turn detection with `pyannote.audio`
+- Interviewer / candidate role mapping
+- Speaker-aware transcript segments
+
+### ⏱️ Transcript Studio
+- Timestamped transcript
+- Audio playback
+- Click a transcript segment to seek directly to that moment
+- Download transcript
+- Persisted artifacts for later inspection
+
+### 🤖 AI Interview Review
+- Overall hiring signal
+- Confidence / evidence summary
+- Strengths and gaps
+- Improvement guidance
+- Question-by-question ratings
+- Stronger-answer suggestions
+- Role / level signal
+
+### 🧠 Reliable long-running processing
+- Persisted processing jobs
+- Real stage updates
+- Elapsed-time tracking
+- Browser/frontend restart recovery
+- WebSocket progress updates
+
+### 🔒 Local-first by default
+- Audio and processing artifacts stay on your machine
+- SQLite for structured local state
+- External AI review is optional and explicit
+
+---
+
+## Tech stack
+
+| Area | Technology |
+|---|---|
+| Frontend | React, TypeScript, Vite |
+| Backend | Python 3.11, FastAPI |
+| Local persistence | SQLite |
+| Realtime progress | WebSockets |
+| Transcription | MLX Whisper |
+| Speaker diarization | pyannote.audio |
+| Audio tooling | FFmpeg / ffprobe |
+| AI review | OpenAI via pluggable review-engine interface |
+| Python tooling | uv |
+| Target hardware | Apple Silicon / MPS |
+
+---
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    U[Browser / React UI] -->|REST + WebSocket| API[FastAPI]
+    UI[React / TypeScript UI]
+      -->|REST + WebSocket| API[FastAPI]
 
     API --> DB[(SQLite)]
-    API --> FS[Local artifact storage]
+    API --> FILES[Local artifacts]
 
     API --> JOB[Processing Coordinator]
 
-    JOB --> PRE[Audio inspection + preprocessing]
-    PRE --> STT[Local transcription]
-    STT --> DIA[Speaker diarization]
+    JOB --> AUDIO[Audio inspection + preprocessing]
+    AUDIO --> STT[MLX Whisper]
+    STT --> DIA[pyannote diarization]
     DIA --> ALIGN[Speaker alignment]
-    ALIGN --> QUAL[Quality checks]
-    QUAL --> EXP[Artifact export]
+    ALIGN --> QUALITY[Transcript quality checks]
+    QUALITY --> EXPORT[Artifact export]
+    EXPORT --> FILES
 
-    EXP --> FS
-
-    API --> REV[AI Review Engine]
-    REV -->|optional API call| LLM[LLM Provider]
-    REV --> FS
+    API --> REVIEW[AI Review Engine]
+    REVIEW -->|optional| LLM[LLM Provider]
+    REVIEW --> FILES
 ```
 
-The application is intentionally split into two concerns:
+The application is intentionally split into:
 
-1. **Local media intelligence** — transcription, diarization, alignment and artifacts stay on the machine.
-2. **Optional AI reasoning** — structured interview review can call an external LLM provider.
+1. **Local media intelligence** — transcription, diarization, alignment and artifact generation.
+2. **Optional AI reasoning** — structured review through a provider abstraction.
 
-See [Architecture](docs/ARCHITECTURE.md) for the detailed design.
+For deeper details, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
 
@@ -80,32 +156,25 @@ See [Architecture](docs/ARCHITECTURE.md) for the detailed design.
 
 ## 1. System requirements
 
-### Validated environment
-
 | Requirement | Recommended |
 |---|---|
 | Operating system | macOS |
 | CPU | Apple Silicon (M-series) |
-| RAM | 16 GB minimum; 32 GB recommended for long recordings |
+| RAM | 16 GB minimum, 32 GB recommended |
 | Python | 3.11 |
+| Node.js | 20+ |
 | Python package manager | `uv` |
-| Node.js | 20+ recommended |
-| npm | bundled with Node.js |
-| FFmpeg | current Homebrew version |
-| Disk | several GB free for model cache + recordings |
-| Browser | current Chrome / Chromium / Safari |
+| Audio tooling | FFmpeg |
+| Browser | Chrome / Chromium / Safari |
+| Disk | Several GB for models + recordings |
 
-### Why Apple Silicon?
-
-The current transcription implementation uses **MLX Whisper**, and speaker diarization can use Apple's **MPS** acceleration. This is currently the best-tested path.
-
-Linux/CUDA support can be added later, but should currently be considered **unverified** rather than guaranteed.
+> Linux/CUDA support is not yet considered a validated path.
 
 ---
 
 ## 2. Install host dependencies
 
-### Homebrew
+Using Homebrew:
 
 ```bash
 brew install ffmpeg
@@ -127,7 +196,7 @@ npm --version
 ## 3. Clone the repository
 
 ```bash
-git clone <YOUR_GITHUB_REPOSITORY_URL>
+git clone https://github.com/aryan000/interview-intelligence.git
 cd interview-intelligence
 ```
 
@@ -135,66 +204,71 @@ cd interview-intelligence
 
 ## 4. Install backend dependencies
 
-The backend uses `uv`.
-
 ```bash
 uv sync
 ```
 
-Verify the environment:
+Verify:
 
 ```bash
 uv run python --version
 ```
 
-Expected: Python 3.11.x.
+Expected:
+
+```text
+Python 3.11.x
+```
 
 ---
 
-## 5. Configure Hugging Face access for diarization
+## 5. Configure Hugging Face access
 
-Speaker diarization currently uses:
+Speaker diarization uses:
 
 ```text
 pyannote/speaker-diarization-community-1
 ```
 
-The model is gated.
+This is a gated model.
 
-1. Create/sign in to a Hugging Face account.
-2. Accept the model's access conditions.
-3. Create a Hugging Face access token.
-4. Authenticate locally.
+You must:
 
-For example:
+1. sign in to Hugging Face;
+2. accept the model's access conditions;
+3. create an access token;
+4. authenticate locally.
+
+Example:
 
 ```bash
 uv run huggingface-cli login
 ```
 
-Or configure the token using the mechanism supported by your local Hugging Face installation.
+If access is missing, diarization may fail with:
 
-If access is missing, diarization will fail with a `401 Unauthorized` / `GatedRepoError`.
+```text
+401 Unauthorized
+GatedRepoError
+```
 
-The first diarization run downloads the model files. Later runs use the local cache and are significantly faster.
+The first successful run downloads the model files. Warm runs are significantly faster.
 
 ---
 
 ## 6. Optional: configure AI Review
 
-Transcription and diarization work locally without an OpenAI key.
+Local transcription and diarization do **not** require OpenAI.
 
-AI Review currently supports an OpenAI-backed review engine.
-
-Set the key only in your shell/environment:
+To enable AI Review:
 
 ```bash
 export OPENAI_API_KEY="..."
 ```
 
-Do **not** commit API keys.
+Do not commit API keys.
 
-You can verify configuration without printing the secret:
+Verify without exposing the secret:
 
 ```bash
 uv run python - <<'PY'
@@ -203,17 +277,17 @@ print("OPENAI_API_KEY configured:", bool(os.getenv("OPENAI_API_KEY")))
 PY
 ```
 
-The review model can be overridden with:
+Optional model override:
 
 ```bash
 export INTERVIEW_INTELLIGENCE_REVIEW_MODEL="<model-name>"
 ```
 
-> API analysis consumes paid API credits. Cost/usage visibility and cheaper default review models are on the roadmap.
+> AI Review consumes external API credits. Token/cost visibility and a cheaper default model strategy are tracked in the roadmap.
 
 ---
 
-# Running the app
+# Run the app
 
 Use two terminals.
 
@@ -239,8 +313,6 @@ Swagger:
 http://127.0.0.1:8000/docs
 ```
 
-Swagger is useful for inspecting and manually testing REST endpoints.
-
 ---
 
 ## Terminal 2 — frontend
@@ -257,7 +329,7 @@ Frontend:
 http://localhost:5173
 ```
 
-For a production frontend build:
+Production frontend build:
 
 ```bash
 npm run build
@@ -267,23 +339,23 @@ npm run build
 
 # First-run workflow
 
-1. Open `http://localhost:5173`.
-2. Select **Add interview**.
-3. Upload an audio recording.
-4. Enter company, interviewer, role, round and interview date/time.
-5. Start processing.
-6. Leave the backend running while local transcription/diarization completes.
-7. Open the completed interview.
-8. Use **Transcript Studio** for synchronized audio/transcript playback.
-9. Optionally run **AI Review**.
+1. Open `http://localhost:5173`
+2. Click **Add interview**
+3. Upload an audio recording
+4. Enter company, interviewer, date/time, role and round
+5. Start processing
+6. Let the backend complete transcription + diarization
+7. Open the completed interview
+8. Use **Transcript Studio** for synchronized playback
+9. Optionally run **AI Review**
 
-Long recordings are computationally expensive. A real ~79-minute interview has been successfully processed end-to-end on an Apple Silicon development machine in roughly tens of minutes; exact runtime depends on machine, model cache state and recording characteristics.
+Long recordings are compute-heavy. Processing time depends on hardware, model cache state and recording characteristics.
 
 ---
 
-# Persistent local data
+## Local data
 
-By default, Interview Intelligence stores application data under:
+Default application directory:
 
 ```text
 ~/Library/Application Support/InterviewIntelligence/
@@ -303,23 +375,21 @@ InterviewIntelligence/
             ├── transcript.json
             ├── metadata.json
             ├── quality.json
-            └── review.json        # when AI Review has been run
+            └── review.json
 ```
 
-`app.db` contains interview metadata and processing jobs.
-
-The generated recording/artifact directory is managed by the application.
+`app.db` stores interview metadata and processing jobs.
 
 When deleting an interview:
 
-- database metadata and processing history are removed;
+- database metadata is removed;
 - generated artifacts are removed;
 - app-managed uploaded copies can be removed;
-- an original recording outside Interview Intelligence's managed storage is intentionally preserved.
+- an original recording outside the managed application directory is intentionally preserved.
 
 ---
 
-# Processing pipeline
+## Processing pipeline
 
 ```mermaid
 flowchart TD
@@ -329,71 +399,75 @@ flowchart TD
     --> D[Transcribe]
     --> E[Sanitize transcript timeline]
     --> F[Diarize speakers]
-    --> G[Align transcript and speaker turns]
+    --> G[Align speaker turns]
     --> H[Map interviewer / candidate roles]
-    --> I[Quality detection]
+    --> I[Quality checks]
     --> J[Export artifacts]
     --> K[Ready in Transcript Studio]
 ```
 
 Persisted job state includes:
 
-- job status;
-- pipeline stage;
-- progress percentage;
+- status;
+- stage;
+- progress;
 - processed audio seconds;
-- total audio duration;
-- start/update/completion timestamps;
+- total duration;
+- started / updated / completed timestamps;
 - failure information.
 
-The frontend can recover an active job after a browser/frontend restart and reconnect to progress events.
+The frontend can recover an active job after a browser or frontend restart.
 
 ---
 
-# AI Review
+## AI Review output
 
-AI Review produces a structured result rather than a free-form answer.
+The review engine returns structured data rather than free-form prose.
 
-Current review output includes:
+Current output includes:
 
-- overall summary;
-- hiring signal;
-- confidence;
-- strengths;
-- concerns;
-- improvement areas;
-- role signal;
-- level signal;
-- question-by-question extraction;
-- answer summary;
-- per-question strengths/gaps;
-- stronger-answer guidance;
-- rating;
-- level signal.
+```text
+Verdict
+├── overall summary
+├── hiring signal
+├── confidence
+├── strengths
+├── concerns
+├── improvement areas
+├── role signal
+└── level signal
 
-The current review page presents this as:
+Questions
+├── interviewer question
+├── answer summary
+├── rating
+├── strengths
+├── gaps
+├── stronger answer
+└── level signal
+```
+
+The UI presents it as:
 
 ```text
 Verdict
   ↓
 Evidence summary
   ↓
-Coaching / improvement areas
+Coaching
   ↓
-Question-by-question evidence
+Question-by-question review
   ↓
 Level assessment
 ```
 
-The recording/audio player remains available above both Transcript and AI Review.
-
 ---
 
-# API overview
+## API overview
 
-The exact OpenAPI contract is always available at `/docs`.
+The exact API contract is available through Swagger.
 
-Important endpoint families include:
+Important endpoint families:
 
 ```text
 GET    /api/v1/interviews
@@ -412,15 +486,11 @@ POST   /api/v1/interviews/{interview_id}/review
 GET    /api/v1/interviews/{interview_id}/review
 ```
 
-Use Swagger as the source of truth if endpoint details evolve.
-
 ---
 
 # Development
 
 ## Backend quality gate
-
-Run from repository root:
 
 ```bash
 uv run pytest
@@ -435,18 +505,23 @@ cd frontend
 npm run build
 ```
 
-Before committing a feature, both backend and frontend checks should be green when the change touches both layers.
+Keep both green before merging changes that touch both layers.
 
 ---
 
-# Repository structure
+## Repository structure
 
 ```text
 interview-intelligence/
 ├── README.md
 ├── ROADMAP.md
 ├── docs/
-│   └── ARCHITECTURE.md
+│   ├── PRODUCT.md
+│   ├── REQUIREMENTS.md
+│   ├── ARCHITECTURE.md
+│   ├── DATA_MODEL.md
+│   ├── TRANSCRIPTION_PIPELINE.md
+│   └── V1_TECHNICAL_SPEC.md
 ├── src/
 │   └── interview_intelligence/
 │       ├── api/
@@ -465,36 +540,26 @@ interview-intelligence/
 ├── scripts/
 ├── benchmarks/
 └── frontend/
-    ├── src/
-    ├── package.json
-    └── vite.config.*
 ```
-
-The codebase favors explicit domain/application boundaries over putting processing logic directly in FastAPI routes.
 
 ---
 
-# Troubleshooting
+## Troubleshooting
 
-## `401 Unauthorized` downloading pyannote
+### pyannote `401 Unauthorized`
 
-Symptoms:
+If you see:
 
 ```text
 GatedRepoError
 Cannot access gated repo
 ```
 
-Fix:
+accept the model terms and authenticate with a Hugging Face token.
 
-- accept the model terms on Hugging Face;
-- authenticate with a token that has access.
+### Processing appears stuck
 
----
-
-## Processing appears stuck
-
-Check persisted job state:
+Inspect persisted jobs:
 
 ```bash
 sqlite3 -header -column \
@@ -507,9 +572,7 @@ sqlite3 -header -column \
  LIMIT 5;'
 ```
 
-Long transcription operations can remain on one stage for several minutes while still actively using CPU/GPU.
-
-Check the backend process:
+Check backend compute activity:
 
 ```bash
 ps -Ao pid,etime,%cpu,%mem,command | \
@@ -517,33 +580,18 @@ grep -E "uvicorn|Python|mlx|pyannote" | \
 grep -v grep
 ```
 
----
+A long transcription may remain on one stage for several minutes while still actively using compute.
 
-## AI Review returns HTTP 500 / quota error
+### OpenAI quota error
 
-If the backend traceback contains:
+If the backend shows:
 
 ```text
 insufficient_quota
 credit_balance_exhausted
 ```
 
-the OpenAI API account needs available credits.
-
-Provider errors should eventually be converted into cleaner application-level errors; see the roadmap.
-
----
-
-## Frontend cannot reach the backend
-
-Confirm:
-
-```text
-Backend:  http://127.0.0.1:8000
-Frontend: http://localhost:5173
-```
-
-Check CORS configuration and ensure the FastAPI process is still running.
+the configured API account has no remaining credits.
 
 ---
 
@@ -551,72 +599,92 @@ Check CORS configuration and ensure the FastAPI process is still running.
 
 Interview recordings can contain highly sensitive personal and professional information.
 
-The project is intentionally **local-first**:
+Interview Intelligence is intentionally local-first:
 
-- recordings are stored locally by default;
-- transcription and diarization run locally;
-- external sharing should be explicit;
-- AI Review currently sends transcript content to the configured external LLM provider when invoked.
+- recordings stay local by default;
+- transcription runs locally;
+- diarization runs locally;
+- cloud sync is optional;
+- AI Review sends transcript content only when explicitly invoked.
 
-Do not run AI Review on content you are not allowed to send to that provider.
-
-Authentication, encryption/retention policy, and secure remote access remain important roadmap items before exposing the application publicly.
+Do not send content to an external provider unless you are permitted to do so.
 
 ---
 
-# Remote access / Cloudflare
+## Cloudflare direction
 
-The project is currently designed to run on localhost.
+The existing product architecture supports an optional cloud workspace.
 
-A planned deployment path is **Cloudflare Tunnel** for securely reaching a locally running application without directly opening inbound ports on the machine.
+Planned Cloudflare components include:
 
-Potential architecture:
+- **Cloudflare R2** for synchronized artifacts;
+- **Cloudflare-hosted viewer / Pages** for always-available access;
+- optional secure access patterns for remote use.
 
-```mermaid
-flowchart LR
-    B[Remote Browser]
-    --> CF[Cloudflare Access / Tunnel]
-    --> UI[Local React / served frontend]
-    --> API[Local FastAPI]
-    --> DATA[Local recordings + SQLite + ML processing]
-```
+Local transcription must continue to work without cloud connectivity.
 
-Before enabling remote access, the project should add proper authentication/access control and review what endpoints/artifacts can be exposed.
-
-Cloudflare is therefore a **roadmap item**, not part of the current required local setup.
-
-See [ROADMAP.md](ROADMAP.md).
+See the architecture and roadmap documents for the latest direction.
 
 ---
 
 # Roadmap
 
-The immediate roadmap includes:
+Near-term:
 
-- AI analysis loader, elapsed time, token usage and cost visibility;
-- cheaper/default model strategy and provider abstractions;
-- cross-interview intelligence and recurring-pattern detection;
-- Cloudflare Tunnel + secure remote access;
-- authentication;
-- long-running job cancellation/retry;
-- better transcription progress reporting;
-- interview grouping and comparison;
-- analysis/export improvements;
-- production hardening.
+- [ ] AI analysis elapsed-time UI
+- [ ] token and API cost visibility
+- [ ] economical default review model
+- [ ] provider error handling
+- [ ] direct transcript upload
+- [ ] cross-interview intelligence
+- [ ] competency taxonomy
+- [ ] recurring strength/gap detection
+- [ ] progress trends
+- [ ] Cloudflare synchronization
+- [ ] secure remote/cloud access
+- [ ] GitHub Actions CI
+- [ ] better job cancel/retry/resume
 
-Full detail: [ROADMAP.md](ROADMAP.md).
+Full roadmap: [`ROADMAP.md`](ROADMAP.md)
 
 ---
 
 # Contributing
 
-This project is still moving quickly. For now:
+Contributions are welcome while the project is evolving.
 
-1. keep changes small and isolated;
+Please:
+
+1. keep changes small and focused;
 2. add/update tests for backend behavior;
-3. run the backend and frontend quality gates;
-4. avoid committing recordings, API keys, model tokens or local databases;
-5. document architectural decisions when introducing a new provider, storage backend or execution model.
+3. run backend and frontend quality gates;
+4. do not commit recordings, API keys, access tokens or local databases;
+5. document architectural decisions that introduce new providers or persistence boundaries.
+
+---
+
+# GitHub topics
+
+Suggested repository topics:
+
+```text
+ai
+interview
+interview-preparation
+speech-to-text
+whisper
+mlx
+pyannote
+fastapi
+react
+typescript
+sqlite
+openai
+local-ai
+apple-silicon
+system-design
+engineering-manager
+```
 
 ---
 
@@ -624,4 +692,4 @@ This project is still moving quickly. For now:
 
 A license has not yet been selected.
 
-Before publishing the repository broadly, add a `LICENSE` file and update this section.
+Before broadly distributing the repository, add a `LICENSE` file and update this section.
