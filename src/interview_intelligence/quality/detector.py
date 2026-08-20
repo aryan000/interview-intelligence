@@ -12,9 +12,11 @@ class TranscriptQualityDetector:
         self,
         repetition_threshold: int = 8,
         minimum_words_for_zero_duration_flag: int = 4,
+        cross_segment_repeat_threshold: int = 4,
     ) -> None:
         self.repetition_threshold = repetition_threshold
         self.minimum_words_for_zero_duration_flag = minimum_words_for_zero_duration_flag
+        self.cross_segment_repeat_threshold = cross_segment_repeat_threshold
 
     def detect(self, segments: list[TranscriptSegment]) -> list[QualityIssue]:
         issues: list[QualityIssue] = []
@@ -24,6 +26,7 @@ class TranscriptQualityDetector:
             issues.extend(self._detect_zero_duration(index, segment))
             issues.extend(self._detect_suspicious_tokens(index, segment))
 
+        issues.extend(self._detect_cross_segment_repetition(segments))
         return issues
 
     def _detect_repetition(
@@ -99,3 +102,44 @@ class TranscriptQualityDetector:
                 ]
 
         return []
+
+    def _detect_cross_segment_repetition(
+        self,
+        segments: list[TranscriptSegment],
+    ) -> list[QualityIssue]:
+        issues: list[QualityIssue] = []
+        normalized = [self._normalize_phrase(segment.text) for segment in segments]
+
+        start = 0
+        while start < len(normalized):
+            phrase = normalized[start]
+            if not phrase:
+                start += 1
+                continue
+
+            end = start + 1
+            while end < len(normalized) and normalized[end] == phrase:
+                end += 1
+
+            repeat_count = end - start
+            if repeat_count >= self.cross_segment_repeat_threshold:
+                issues.append(
+                    QualityIssue(
+                        flag=QualityFlag.REPETITION_LOOP,
+                        segment_index=start,
+                        message=(
+                            f"Phrase {phrase!r} repeats across "
+                            f"{repeat_count} adjacent segments."
+                        ),
+                        severity="high",
+                    )
+                )
+
+            start = end
+
+        return issues
+
+    @staticmethod
+    def _normalize_phrase(text: str) -> str:
+        words = re.findall(r"[a-zA-Z']+", text.lower())
+        return " ".join(words)
