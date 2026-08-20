@@ -1,5 +1,6 @@
 import type {
   Interview,
+  InterviewReview,
   JobEvent,
   ProcessInterviewResponse,
   TranscriptResponse,
@@ -8,21 +9,48 @@ import type {
 const API_BASE = "http://127.0.0.1:8000/api/v1";
 const WS_BASE = "ws://127.0.0.1:8000/api/v1";
 
+async function responseError(response: Response): Promise<Error> {
+  const raw = await response.text();
+  try {
+    const parsed = JSON.parse(raw) as { detail?: string };
+    return new Error(parsed.detail ?? raw);
+  } catch {
+    return new Error(raw || `Request failed (${response.status})`);
+  }
+}
+
 export async function listInterviews(): Promise<Interview[]> {
   const response = await fetch(`${API_BASE}/interviews`);
-  if (!response.ok) {
-    throw new Error(`Failed to load interviews (${response.status})`);
-  }
+  if (!response.ok) throw await responseError(response);
   return response.json() as Promise<Interview[]>;
 }
 
 export async function getTranscript(interviewId: string): Promise<TranscriptResponse> {
   const response = await fetch(`${API_BASE}/interviews/${interviewId}/transcript`);
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Failed to load transcript (${response.status})`);
-  }
+  if (!response.ok) throw await responseError(response);
   return response.json() as Promise<TranscriptResponse>;
+}
+
+export async function getInterviewReview(
+  interviewId: string,
+): Promise<InterviewReview | null> {
+  const response = await fetch(`${API_BASE}/interviews/${interviewId}/review`);
+
+  if (response.status === 404) return null;
+  if (!response.ok) throw await responseError(response);
+
+  return response.json() as Promise<InterviewReview>;
+}
+
+export async function analyzeInterview(
+  interviewId: string,
+): Promise<InterviewReview> {
+  const response = await fetch(`${API_BASE}/interviews/${interviewId}/review`, {
+    method: "POST",
+  });
+
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<InterviewReview>;
 }
 
 export function getAudioUrl(interviewId: string): string {
@@ -57,11 +85,7 @@ export async function uploadInterview(input: {
     body: form,
   });
 
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Upload failed (${response.status})`);
-  }
-
+  if (!response.ok) throw await responseError(response);
   return response.json() as Promise<Interview>;
 }
 
@@ -73,11 +97,7 @@ export async function processInterview(
     { method: "POST" },
   );
 
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Processing failed to start (${response.status})`);
-  }
-
+  if (!response.ok) throw await responseError(response);
   return response.json() as Promise<ProcessInterviewResponse>;
 }
 

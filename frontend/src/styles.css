@@ -1061,3 +1061,358 @@ h1 {
     grid-template-columns: 1fr;
   }
 }
+
+
+.studio-tabs {
+  max-width: 1240px;
+  margin: 0 auto 12px;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  width: fit-content;
+  margin-left: max(calc((100% - 1240px) / 2), 0px);
+  border: 1px solid #e1e7e4;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.studio-tab {
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #7b8982;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.studio-tab-active {
+  color: #285d49;
+  background: #eaf7f1;
+}
+
+.review-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #5eb18f;
+}
+
+.review-view {
+  min-height: 420px;
+}
+
+.review-empty {
+  min-height: 460px;
+  padding: 60px 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.review-empty-icon {
+  width: 50px;
+  height: 50px;
+  margin-bottom: 15px;
+  display: grid;
+  place-items: center;
+  border-radius: 15px;
+  color: #2f7257;
+  background: #e7f6ef;
+  font-size: 21px;
+}
+
+.review-empty h2 {
+  margin-bottom: 8px;
+  font-size: 24px;
+}
+
+.review-empty > p:not(.eyebrow) {
+  max-width: 520px;
+  color: #7e8b84;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.analyze-button {
+  margin-top: 14px;
+}
+
+.review-hero {
+  padding: 24px 26px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  gap: 30px;
+  border-bottom: 1px solid #edf1ef;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(158, 224, 198, 0.19), transparent 35%),
+    #fff;
+}
+
+.review-title-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.review-title-row h2 {
+  margin: 0;
+  font-size: 25px;
+}
+
+.review-hero > div:first-child > p:last-child {
+  max-width: 760px;
+  margin: 12px 0 0;
+  color: #65736c;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.hiring-signal {
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.signal-hire,
+.signal-strong_hire {
+  color: #287b5c;
+  background: #e7f6ef;
+}
+
+.signal-mixed,
+.signal-insufficient_evidence {
+  color: #8b6c31;
+  background: #fff4db;
+}
+
+.signal-no_hire,
+.signal-strong_no_hire {
+  color: #9a4d4d;
+  background: #ffeded;
+}
+
+.review-model {
+  min-height: 92px;
+  padding: 13px;
+  border: 1px solid #dfebe5;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.review-model span,
+.review-model strong,
+.review-model small {
+  display: block;
+}
+
+.review-model span {
+  color: #8c9992;
+  font-size: 9px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.review-model strong {
+  margin: 7px 0 3px;
+  color: #2d674f;
+  font-size: 23px;
+}
+
+.review-model small {
+  color: #9aa49f;
+  font-size: 9px;
+}
+
+.review-summary-grid {
+  padding: 18px 22px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  border-bottom: 1px solid #edf1ef;
+}
+
+.review-summary-card {
+  padding: 14px;
+  border: 1px solid #e7ece9;
+  border-radius: 11px;
+  background: #fbfcfc;
+}
+
+.review-section-label {
+  display: block;
+  margin-bottom: 7px;
+  color: #8b9891;
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.09em;
+}
+
+.review-summary-card ul,
+.question-review-body ul {
+  margin: 0;
+  padding-left: 17px;
+  color: #53625b;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.review-summary-card li + li,
+.question-review-body li + li {
+  margin-top: 4px;
+}
+
+.review-signal-row {
+  padding: 17px 22px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  border-bottom: 1px solid #edf1ef;
+}
+
+.review-signal-row p {
+  margin: 0;
+  color: #637169;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.question-review-list {
+  padding: 20px 22px;
+}
+
+.question-review-heading {
+  margin-bottom: 12px;
+}
+
+.question-review-heading h3 {
+  margin: 0 0 3px;
+  font-size: 15px;
+}
+
+.question-review-heading p {
+  margin: 0;
+  color: #929d97;
+  font-size: 9px;
+}
+
+.question-review-card {
+  border: 1px solid #e5ebe8;
+  border-radius: 11px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.question-review-card + .question-review-card {
+  margin-top: 9px;
+}
+
+.question-review-card summary {
+  list-style: none;
+  padding: 13px 14px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 22px;
+  gap: 10px;
+  align-items: center;
+  cursor: pointer;
+}
+
+.question-review-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.question-index {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: #3c6f5a;
+  background: #edf6f2;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.question-summary-copy strong,
+.question-summary-copy span {
+  display: block;
+}
+
+.question-summary-copy strong {
+  color: #3f4d46;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.question-summary-copy span {
+  margin-top: 4px;
+  color: #909b95;
+  font-size: 9px;
+}
+
+.question-chevron {
+  color: #9aa59f;
+}
+
+.question-review-body {
+  padding: 16px 18px 18px 52px;
+  border-top: 1px solid #edf1ef;
+  background: #fbfcfb;
+}
+
+.answer-summary p,
+.stronger-answer p {
+  margin: 0;
+  color: #56645d;
+  font-size: 10px;
+  line-height: 1.65;
+}
+
+.question-two-col {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.stronger-answer {
+  margin-top: 17px;
+  padding: 13px;
+  border-left: 3px solid #85cdb0;
+  border-radius: 0 9px 9px 0;
+  background: #f0f8f4;
+}
+
+.rerun-button {
+  margin: 0 22px 22px;
+}
+
+@media (max-width: 800px) {
+  .review-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .review-signal-row,
+  .question-two-col {
+    grid-template-columns: 1fr;
+  }
+
+  .review-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .review-model {
+    width: fit-content;
+    min-width: 140px;
+  }
+}

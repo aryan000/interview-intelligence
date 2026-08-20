@@ -1,7 +1,9 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  analyzeInterview,
   getAudioUrl,
+  getInterviewReview,
   getTranscript,
   getTranscriptDownloadUrl,
   listInterviews,
@@ -9,7 +11,7 @@ import {
   subscribeToJob,
   uploadInterview,
 } from "./api";
-import type { Interview, JobEvent, TranscriptLine } from "./types";
+import type { Interview, InterviewReview, JobEvent, TranscriptLine } from "./types";
 
 type UploadFormState = {
   company: string;
@@ -22,6 +24,7 @@ type UploadFormState = {
 };
 
 type Screen = "workspace" | "transcript";
+type TranscriptTab = "transcript" | "review";
 
 const emptyUploadForm: UploadFormState = {
   company: "",
@@ -56,6 +59,13 @@ function timestampToSeconds(value: string): number {
   const parts = value.split(":").map(Number);
   if (parts.length !== 3 || parts.some(Number.isNaN)) return 0;
   return parts[0] * 3600 + parts[1] * 60 + parts[2];
+}
+
+function hiringSignalLabel(value: string): string {
+  return value
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function parseTranscript(raw: string): TranscriptLine[] {
@@ -109,6 +119,11 @@ export default function App() {
   const [currentAudioTime, setCurrentAudioTime] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  const [transcriptTab, setTranscriptTab] = useState<TranscriptTab>("transcript");
+  const [review, setReview] = useState<InterviewReview | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
   const refreshInterviews = async (): Promise<Interview[]> => {
     const data = await listInterviews();
     setInterviews(data);
@@ -137,16 +152,42 @@ export default function App() {
     setIsTranscriptLoading(true);
     setTranscriptError(null);
     setScreen("transcript");
+    setTranscriptTab("transcript");
+    setReview(null);
+    setReviewError(null);
 
     try {
-      const response = await getTranscript(interview.id);
+      const [response, existingReview] = await Promise.all([
+        getTranscript(interview.id),
+        getInterviewReview(interview.id),
+      ]);
       setTranscriptLines(parseTranscript(response.transcript));
+      setReview(existingReview);
     } catch (caught: unknown) {
       setTranscriptError(
         caught instanceof Error ? caught.message : "Unable to load transcript.",
       );
     } finally {
       setIsTranscriptLoading(false);
+    }
+  };
+
+  const handleAnalyzeInterview = async () => {
+    if (!activeInterview) return;
+
+    setIsAnalyzing(true);
+    setReviewError(null);
+
+    try {
+      const result = await analyzeInterview(activeInterview.id);
+      setReview(result);
+      setTranscriptTab("review");
+    } catch (caught: unknown) {
+      setReviewError(
+        caught instanceof Error ? caught.message : "Unable to analyze interview.",
+      );
+    } finally {
+      setIsAnalyzing(false);
     }
   };
 
@@ -304,59 +345,222 @@ export default function App() {
             />
           </section>
 
+          <div className="studio-tabs" role="tablist" aria-label="Interview studio views">
+            <button
+              className={transcriptTab === "transcript" ? "studio-tab studio-tab-active" : "studio-tab"}
+              type="button"
+              onClick={() => setTranscriptTab("transcript")}
+            >
+              Transcript
+            </button>
+            <button
+              className={transcriptTab === "review" ? "studio-tab studio-tab-active" : "studio-tab"}
+              type="button"
+              onClick={() => setTranscriptTab("review")}
+            >
+              AI Review
+              {review && <span className="review-dot" />}
+            </button>
+          </div>
+
           <section className="transcript-layout">
             <div className="transcript-panel">
-              <div className="transcript-toolbar">
-                <div>
-                  <h2>Conversation</h2>
-                  <p>Speaker-labelled transcript with timeline context.</p>
-                </div>
-                <div className="transcript-status">Ready</div>
-              </div>
+              {transcriptTab === "transcript" ? (
+                <>
+                  <div className="transcript-toolbar">
+                    <div>
+                      <h2>Conversation</h2>
+                      <p>Speaker-labelled transcript with timeline context.</p>
+                    </div>
+                    <div className="transcript-status">Ready</div>
+                  </div>
 
-              {isTranscriptLoading ? (
-                <div className="empty-state">Loading transcript…</div>
-              ) : transcriptError ? (
-                <div className="empty-state error-state">{transcriptError}</div>
+                  {isTranscriptLoading ? (
+                    <div className="empty-state">Loading transcript…</div>
+                  ) : transcriptError ? (
+                    <div className="empty-state error-state">{transcriptError}</div>
+                  ) : (
+                    <div className="transcript-list">
+                      {transcriptLines.map((line, index) => {
+                        const isCandidate = line.speaker.toLowerCase().includes("candidate");
+                        const isInterviewer = line.speaker.toLowerCase().includes("interviewer");
+                        const isActive =
+                          currentAudioTime >= line.startSeconds &&
+                          currentAudioTime < Math.max(line.endSeconds, line.startSeconds + 1);
+
+                        return (
+                          <article
+                            className={`transcript-segment ${
+                              isCandidate ? "candidate-segment" : ""
+                            } ${isActive ? "active-segment" : ""}`}
+                            key={`${line.start}-${index}`}
+                            onClick={() => seekTo(line.startSeconds)}
+                          >
+                            <div className="segment-time">{line.start}</div>
+                            <div className="segment-content">
+                              <div className="segment-speaker-row">
+                                <span
+                                  className={`speaker-pill ${
+                                    isCandidate
+                                      ? "speaker-candidate"
+                                      : isInterviewer
+                                        ? "speaker-interviewer"
+                                        : "speaker-unknown"
+                                  }`}
+                                >
+                                  {line.speaker}
+                                </span>
+                                {line.end && <span className="segment-end">to {line.end}</span>}
+                              </div>
+                              <p>{line.text}</p>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
               ) : (
-                <div className="transcript-list">
-                  {transcriptLines.map((line, index) => {
-                    const isCandidate = line.speaker.toLowerCase().includes("candidate");
-                    const isInterviewer = line.speaker.toLowerCase().includes("interviewer");
-
-                      const isActive =
-                        currentAudioTime >= line.startSeconds &&
-                        currentAudioTime < Math.max(line.endSeconds, line.startSeconds + 1);
-
-                      return (
-                      <article
-                        className={`transcript-segment ${
-                          isCandidate ? "candidate-segment" : ""
-                        } ${isActive ? "active-segment" : ""}`}
-                        key={`${line.start}-${index}`}
-                        onClick={() => seekTo(line.startSeconds)}
+                <div className="review-view">
+                  {!review ? (
+                    <div className="review-empty">
+                      <div className="review-empty-icon">✦</div>
+                      <p className="eyebrow">AI INTERVIEW REVIEW</p>
+                      <h2>Turn this transcript into feedback</h2>
+                      <p>
+                        Analyze questions, answer quality, strengths, gaps, level signal,
+                        and the overall hiring signal.
+                      </p>
+                      {reviewError && <div className="inline-error">{reviewError}</div>}
+                      <button
+                        className="primary-button analyze-button"
+                        type="button"
+                        disabled={isAnalyzing}
+                        onClick={() => void handleAnalyzeInterview()}
                       >
-                        <div className="segment-time">{line.start}</div>
-                        <div className="segment-content">
-                          <div className="segment-speaker-row">
-                            <span
-                              className={`speaker-pill ${
-                                isCandidate
-                                  ? "speaker-candidate"
-                                  : isInterviewer
-                                    ? "speaker-interviewer"
-                                    : "speaker-unknown"
-                              }`}
-                            >
-                              {line.speaker}
+                        {isAnalyzing ? "Analyzing interview…" : "✦ Analyze interview"}
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="review-hero">
+                        <div>
+                          <p className="eyebrow">AI INTERVIEW REVIEW</p>
+                          <div className="review-title-row">
+                            <h2>{hiringSignalLabel(review.hiring_signal)}</h2>
+                            <span className={`hiring-signal signal-${review.hiring_signal}`}>
+                              {hiringSignalLabel(review.hiring_signal)}
                             </span>
-                            {line.end && <span className="segment-end">to {line.end}</span>}
                           </div>
-                          <p>{line.text}</p>
+                          <p>{review.overall_summary}</p>
                         </div>
-                      </article>
-                    );
-                  })}
+                        <div className="review-model">
+                          <span>Assessment</span>
+                          <strong>{Math.round(review.confidence * 100)}%</strong>
+                          <small>{review.model}</small>
+                        </div>
+                      </div>
+
+                      <div className="review-summary-grid">
+                        <section className="review-summary-card">
+                          <span className="review-section-label">STRENGTHS</span>
+                          <ul>
+                            {review.strengths.map((item) => <li key={item}>{item}</li>)}
+                          </ul>
+                        </section>
+                        <section className="review-summary-card">
+                          <span className="review-section-label">CONCERNS</span>
+                          <ul>
+                            {review.concerns.map((item) => <li key={item}>{item}</li>)}
+                          </ul>
+                        </section>
+                        <section className="review-summary-card">
+                          <span className="review-section-label">IMPROVEMENT AREAS</span>
+                          <ul>
+                            {review.improvement_areas.map((item) => <li key={item}>{item}</li>)}
+                          </ul>
+                        </section>
+                      </div>
+
+                      {(review.role_signal || review.level_signal) && (
+                        <div className="review-signal-row">
+                          {review.role_signal && (
+                            <div>
+                              <span className="review-section-label">ROLE SIGNAL</span>
+                              <p>{review.role_signal}</p>
+                            </div>
+                          )}
+                          {review.level_signal && (
+                            <div>
+                              <span className="review-section-label">LEVEL SIGNAL</span>
+                              <p>{review.level_signal}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="question-review-list">
+                        <div className="question-review-heading">
+                          <div>
+                            <h3>Question-by-question review</h3>
+                            <p>{review.questions.length} question{review.questions.length === 1 ? "" : "s"} analyzed</p>
+                          </div>
+                        </div>
+
+                        {review.questions.map((question) => (
+                          <details className="question-review-card" key={question.sequence_number} open={review.questions.length <= 2}>
+                            <summary>
+                              <div className="question-index">{question.sequence_number}</div>
+                              <div className="question-summary-copy">
+                                <strong>{question.question}</strong>
+                                <span>
+                                  {question.rating ? `${question.rating}/5` : "Not rated"}
+                                  {question.level_signal ? ` · ${question.level_signal}` : ""}
+                                </span>
+                              </div>
+                              <div className="question-chevron">⌄</div>
+                            </summary>
+
+                            <div className="question-review-body">
+                              <div className="answer-summary">
+                                <span className="review-section-label">ANSWER SUMMARY</span>
+                                <p>{question.answer_summary}</p>
+                              </div>
+
+                              <div className="question-two-col">
+                                <div>
+                                  <span className="review-section-label">WHAT WORKED</span>
+                                  <ul>{question.strengths.map((item) => <li key={item}>{item}</li>)}</ul>
+                                </div>
+                                <div>
+                                  <span className="review-section-label">GAPS</span>
+                                  <ul>{question.gaps.map((item) => <li key={item}>{item}</li>)}</ul>
+                                </div>
+                              </div>
+
+                              {question.stronger_answer && (
+                                <div className="stronger-answer">
+                                  <span className="review-section-label">STRONGER ANSWER</span>
+                                  <p>{question.stronger_answer}</p>
+                                </div>
+                              )}
+                            </div>
+                          </details>
+                        ))}
+                      </div>
+
+                      {reviewError && <div className="inline-error">{reviewError}</div>}
+
+                      <button
+                        className="secondary-button rerun-button"
+                        type="button"
+                        disabled={isAnalyzing}
+                        onClick={() => void handleAnalyzeInterview()}
+                      >
+                        {isAnalyzing ? "Analyzing…" : "↻ Re-run analysis"}
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>

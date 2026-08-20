@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from interview_intelligence.api.background import BackgroundProcessingManager
+from interview_intelligence.api.review_routes import build_review_router
 from interview_intelligence.api.routes import build_router
 from interview_intelligence.application.existing_interview_coordinator import (
     ExistingInterviewProcessingCoordinator,
@@ -71,6 +72,7 @@ def create_app(
 
     app.state.background_manager = BackgroundProcessingManager(coordinator_factory)
     app.include_router(build_router())
+    app.include_router(build_review_router())
     return app
 
 

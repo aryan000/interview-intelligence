@@ -41,3 +41,38 @@ export type TranscriptLine = {
   speaker: string;
   text: string;
 };
+
+export type HiringSignal =
+  | "strong_no_hire"
+  | "no_hire"
+  | "mixed"
+  | "hire"
+  | "strong_hire"
+  | "insufficient_evidence";
+
+export type QuestionReview = {
+  sequence_number: number;
+  question: string;
+  question_start_seconds: number | null;
+  answer_summary: string;
+  strengths: string[];
+  gaps: string[];
+  stronger_answer: string | null;
+  rating: number | null;
+  level_signal: string | null;
+};
+
+export type InterviewReview = {
+  interview_id: string;
+  provider: string;
+  model: string;
+  overall_summary: string;
+  hiring_signal: HiringSignal;
+  confidence: number;
+  strengths: string[];
+  concerns: string[];
+  improvement_areas: string[];
+  questions: QuestionReview[];
+  role_signal: string | null;
+  level_signal: string | null;
+};
