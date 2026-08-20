@@ -132,6 +132,62 @@ function timestampToSeconds(value: string): number {
   return parts[0] * 3600 + parts[1] * 60 + parts[2];
 }
 
+function confidenceLabel(value: number): string {
+  if (value >= 0.8) return "High confidence";
+  if (value >= 0.6) return "Medium confidence";
+  return "Low confidence";
+}
+
+function verdictSubtitle(signal: string): string {
+  switch (signal) {
+    case "strong_hire":
+      return "Clearly above the expected interview bar";
+    case "hire":
+      return "Meets the expected interview bar";
+    case "mixed":
+      return "Mixed evidence against the expected bar";
+    case "no_hire":
+      return "Below the expected interview bar";
+    case "strong_no_hire":
+      return "Clearly below the expected interview bar";
+    default:
+      return "Not enough evidence for a reliable hiring decision";
+  }
+}
+
+function improvementTitle(item: string, index: number): string {
+  const lower = item.toLowerCase();
+  if (lower.includes("structure") || lower.includes("framework")) {
+    return "Structure your approach";
+  }
+  if (
+    lower.includes("scale") ||
+    lower.includes("qps") ||
+    lower.includes("latency") ||
+    lower.includes("throughput")
+  ) {
+    return "Quantify early";
+  }
+  if (
+    lower.includes("data") ||
+    lower.includes("database") ||
+    lower.includes("storage") ||
+    lower.includes("sql")
+  ) {
+    return "Explain data decisions";
+  }
+  if (lower.includes("trade-off") || lower.includes("tradeoff")) {
+    return "Make trade-offs explicit";
+  }
+  if (lower.includes("leadership") || lower.includes("team")) {
+    return "Show leadership scope";
+  }
+  if (lower.includes("communicat") || lower.includes("concise")) {
+    return "Communicate more crisply";
+  }
+  return `Improvement ${String(index + 1).padStart(2, "0")}`;
+}
+
 function hiringSignalLabel(value: string): string {
   return value
     .split("_")
@@ -197,6 +253,9 @@ export default function App() {
   const [review, setReview] = useState<InterviewReview | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [showAllStrengths, setShowAllStrengths] = useState(false);
+  const [showAllGaps, setShowAllGaps] = useState(false);
+  const [showAllImprovements, setShowAllImprovements] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<Interview | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -292,6 +351,9 @@ export default function App() {
     setTranscriptTab("transcript");
     setReview(null);
     setReviewError(null);
+    setShowAllStrengths(false);
+    setShowAllGaps(false);
+    setShowAllImprovements(false);
 
     try {
       const [response, existingReview] = await Promise.all([
@@ -544,7 +606,7 @@ export default function App() {
             </button>
           </div>
 
-          <section className="transcript-layout">
+          <section className={`transcript-layout ${transcriptTab === "review" ? "review-layout-wide" : ""}`}>
             <div className="transcript-panel">
               {transcriptTab === "transcript" ? (
                 <>
@@ -624,111 +686,317 @@ export default function App() {
                     </div>
                   ) : (
                     <>
-                      <div className="review-hero">
-                        <div>
-                          <p className="eyebrow">AI INTERVIEW REVIEW</p>
-                          <div className="review-title-row">
-                            <h2>{hiringSignalLabel(review.hiring_signal)}</h2>
-                            <span className={`hiring-signal signal-${review.hiring_signal}`}>
-                              {hiringSignalLabel(review.hiring_signal)}
-                            </span>
-                          </div>
-                          <p>{review.overall_summary}</p>
-                        </div>
-                        <div className="review-model">
-                          <span>Assessment</span>
-                          <strong>{Math.round(review.confidence * 100)}%</strong>
-                          <small>{review.model}</small>
-                        </div>
-                      </div>
+                      {(() => {
+                        const ratedQuestions = review.questions.filter(
+                          (question) => question.rating !== null,
+                        );
+                        const averageRating =
+                          ratedQuestions.length > 0
+                            ? ratedQuestions.reduce(
+                                (sum, question) => sum + (question.rating ?? 0),
+                                0,
+                              ) / ratedQuestions.length
+                            : null;
+                        const strongAnswers = ratedQuestions.filter(
+                          (question) => (question.rating ?? 0) >= 4,
+                        ).length;
+                        const belowBarAnswers = ratedQuestions.filter(
+                          (question) => (question.rating ?? 0) <= 2,
+                        ).length;
+                        const visibleStrengths = showAllStrengths
+                          ? review.strengths
+                          : review.strengths.slice(0, 3);
+                        const visibleGaps = showAllGaps
+                          ? review.concerns
+                          : review.concerns.slice(0, 3);
+                        const visibleImprovements = showAllImprovements
+                          ? review.improvement_areas
+                          : review.improvement_areas.slice(0, 4);
 
-                      <div className="review-summary-grid">
-                        <section className="review-summary-card">
-                          <span className="review-section-label">STRENGTHS</span>
-                          <ul>
-                            {review.strengths.map((item) => <li key={item}>{item}</li>)}
-                          </ul>
-                        </section>
-                        <section className="review-summary-card">
-                          <span className="review-section-label">CONCERNS</span>
-                          <ul>
-                            {review.concerns.map((item) => <li key={item}>{item}</li>)}
-                          </ul>
-                        </section>
-                        <section className="review-summary-card">
-                          <span className="review-section-label">IMPROVEMENT AREAS</span>
-                          <ul>
-                            {review.improvement_areas.map((item) => <li key={item}>{item}</li>)}
-                          </ul>
-                        </section>
-                      </div>
-
-                      {(review.role_signal || review.level_signal) && (
-                        <div className="review-signal-row">
-                          {review.role_signal && (
-                            <div>
-                              <span className="review-section-label">ROLE SIGNAL</span>
-                              <p>{review.role_signal}</p>
-                            </div>
-                          )}
-                          {review.level_signal && (
-                            <div>
-                              <span className="review-section-label">LEVEL SIGNAL</span>
-                              <p>{review.level_signal}</p>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      <div className="question-review-list">
-                        <div className="question-review-heading">
-                          <div>
-                            <h3>Question-by-question review</h3>
-                            <p>{review.questions.length} question{review.questions.length === 1 ? "" : "s"} analyzed</p>
-                          </div>
-                        </div>
-
-                        {review.questions.map((question) => (
-                          <details className="question-review-card" key={question.sequence_number} open={review.questions.length <= 2}>
-                            <summary>
-                              <div className="question-index">{question.sequence_number}</div>
-                              <div className="question-summary-copy">
-                                <strong>{question.question}</strong>
-                                <span>
-                                  {question.rating ? `${question.rating}/5` : "Not rated"}
-                                  {question.level_signal ? ` · ${question.level_signal}` : ""}
-                                </span>
-                              </div>
-                              <div className="question-chevron">⌄</div>
-                            </summary>
-
-                            <div className="question-review-body">
-                              <div className="answer-summary">
-                                <span className="review-section-label">ANSWER SUMMARY</span>
-                                <p>{question.answer_summary}</p>
+                        return (
+                          <>
+                            <section className={`review-verdict signal-border-${review.hiring_signal}`}>
+                              <div className="verdict-copy">
+                                <p className="eyebrow">AI INTERVIEW REVIEW</p>
+                                <div className="verdict-title-row">
+                                  <span className={`verdict-icon signal-${review.hiring_signal}`}>
+                                    {review.hiring_signal.includes("hire") &&
+                                    !review.hiring_signal.includes("no_hire")
+                                      ? "✓"
+                                      : review.hiring_signal === "insufficient_evidence"
+                                        ? "?"
+                                        : "×"}
+                                  </span>
+                                  <h2>{hiringSignalLabel(review.hiring_signal)}</h2>
+                                </div>
+                                <h3>{verdictSubtitle(review.hiring_signal)}</h3>
+                                <p className="verdict-summary">{review.overall_summary}</p>
                               </div>
 
-                              <div className="question-two-col">
+                              <div className="review-profile">
+                                <div className="confidence-chip">
+                                  <span>{confidenceLabel(review.confidence)}</span>
+                                  <strong>{Math.round(review.confidence * 100)}%</strong>
+                                </div>
+
+                                <div className="profile-divider" />
+
+                                <div className="profile-row">
+                                  <span>Question average</span>
+                                  <strong>
+                                    {averageRating === null
+                                      ? "Not rated"
+                                      : `${averageRating.toFixed(1)} / 5`}
+                                  </strong>
+                                </div>
+                                <div className="profile-row">
+                                  <span>Strong answers</span>
+                                  <strong>{strongAnswers}</strong>
+                                </div>
+                                <div className="profile-row">
+                                  <span>Below-bar answers</span>
+                                  <strong>{belowBarAnswers}</strong>
+                                </div>
+                                <div className="profile-row">
+                                  <span>Questions analyzed</span>
+                                  <strong>{review.questions.length}</strong>
+                                </div>
+                              </div>
+                            </section>
+
+                            <section className="review-takeaways-grid">
+                              <article className="takeaway-card takeaway-positive">
+                                <div className="takeaway-heading">
+                                  <span className="takeaway-icon">✓</span>
+                                  <h3>What went well</h3>
+                                </div>
+                                <ul>
+                                  {visibleStrengths.map((item) => (
+                                    <li key={item}>{item}</li>
+                                  ))}
+                                </ul>
+                                {review.strengths.length > 3 && (
+                                  <button
+                                    className="text-action text-action-positive"
+                                    type="button"
+                                    onClick={() => setShowAllStrengths((current) => !current)}
+                                  >
+                                    {showAllStrengths
+                                      ? "Show less"
+                                      : `View all ${review.strengths.length} strengths`}{" "}
+                                    →
+                                  </button>
+                                )}
+                              </article>
+
+                              <article className="takeaway-card takeaway-warning">
+                                <div className="takeaway-heading">
+                                  <span className="takeaway-icon">!</span>
+                                  <h3>Biggest gaps</h3>
+                                </div>
+                                <ul>
+                                  {visibleGaps.map((item) => (
+                                    <li key={item}>{item}</li>
+                                  ))}
+                                </ul>
+                                {review.concerns.length > 3 && (
+                                  <button
+                                    className="text-action text-action-warning"
+                                    type="button"
+                                    onClick={() => setShowAllGaps((current) => !current)}
+                                  >
+                                    {showAllGaps
+                                      ? "Show less"
+                                      : `View all ${review.concerns.length} gaps`}{" "}
+                                    →
+                                  </button>
+                                )}
+                              </article>
+
+                              <article className="signal-highlight-card">
                                 <div>
-                                  <span className="review-section-label">WHAT WORKED</span>
-                                  <ul>{question.strengths.map((item) => <li key={item}>{item}</li>)}</ul>
+                                  <span className="signal-mini-label">TOP STRENGTH</span>
+                                  <strong>
+                                    {review.strengths[0] ?? "Insufficient evidence"}
+                                  </strong>
                                 </div>
+                                <div className="signal-highlight-divider" />
                                 <div>
-                                  <span className="review-section-label">GAPS</span>
-                                  <ul>{question.gaps.map((item) => <li key={item}>{item}</li>)}</ul>
+                                  <span className="signal-mini-label">TOP GAP</span>
+                                  <strong>
+                                    {review.concerns[0] ?? "Insufficient evidence"}
+                                  </strong>
+                                </div>
+                              </article>
+                            </section>
+
+                            <section className="improvement-section">
+                              <div className="section-heading-row">
+                                <div>
+                                  <p className="eyebrow">COACHING</p>
+                                  <h3>How to improve next time</h3>
+                                </div>
+                                {review.improvement_areas.length > 4 && (
+                                  <button
+                                    className="text-action"
+                                    type="button"
+                                    onClick={() =>
+                                      setShowAllImprovements((current) => !current)
+                                    }
+                                  >
+                                    {showAllImprovements
+                                      ? "Show less"
+                                      : "View all improvement areas"}{" "}
+                                    →
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="improvement-grid">
+                                {visibleImprovements.map((item, index) => (
+                                  <article className="improvement-item" key={item}>
+                                    <span className="improvement-number">
+                                      {String(index + 1).padStart(2, "0")}
+                                    </span>
+                                    <div>
+                                      <strong>{improvementTitle(item, index)}</strong>
+                                      <p>{item}</p>
+                                    </div>
+                                  </article>
+                                ))}
+                              </div>
+                            </section>
+
+                            <section className="question-review-list redesigned-question-list">
+                              <div className="question-review-heading section-heading-row">
+                                <div>
+                                  <p className="eyebrow">EVIDENCE</p>
+                                  <h3>Question-by-question review</h3>
+                                  <p>
+                                    {review.questions.length} question
+                                    {review.questions.length === 1 ? "" : "s"} analyzed
+                                  </p>
                                 </div>
                               </div>
 
-                              {question.stronger_answer && (
-                                <div className="stronger-answer">
-                                  <span className="review-section-label">STRONGER ANSWER</span>
-                                  <p>{question.stronger_answer}</p>
+                              <div className="question-table-header">
+                                <span>Question</span>
+                                <span>Your rating</span>
+                                <span>Highlights</span>
+                                <span />
+                              </div>
+
+                              {review.questions.map((question) => (
+                                <details
+                                  className="question-review-card redesigned-question-card"
+                                  key={question.sequence_number}
+                                >
+                                  <summary>
+                                    <div className="question-index">
+                                      {question.sequence_number}
+                                    </div>
+                                    <div className="question-summary-copy">
+                                      <strong>{question.question}</strong>
+                                    </div>
+                                    <span
+                                      className={`question-rating rating-${
+                                        question.rating === null
+                                          ? "none"
+                                          : question.rating >= 4
+                                            ? "good"
+                                            : question.rating <= 2
+                                              ? "low"
+                                              : "mixed"
+                                      }`}
+                                    >
+                                      {question.rating ? `${question.rating}/5` : "—"}
+                                    </span>
+                                    <span className="question-highlight">
+                                      {question.level_signal ?? "No level signal available."}
+                                    </span>
+                                    <div className="question-chevron">⌄</div>
+                                  </summary>
+
+                                  <div className="question-review-body">
+                                    <div className="answer-summary">
+                                      <span className="review-section-label">
+                                        ANSWER SUMMARY
+                                      </span>
+                                      <p>{question.answer_summary}</p>
+                                    </div>
+
+                                    <div className="question-two-col">
+                                      <div>
+                                        <span className="review-section-label">
+                                          WHAT WORKED
+                                        </span>
+                                        <ul>
+                                          {question.strengths.map((item) => (
+                                            <li key={item}>{item}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                      <div>
+                                        <span className="review-section-label">GAPS</span>
+                                        <ul>
+                                          {question.gaps.map((item) => (
+                                            <li key={item}>{item}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    </div>
+
+                                    {question.stronger_answer && (
+                                      <div className="stronger-answer">
+                                        <span className="review-section-label">
+                                          STRONGER ANSWER
+                                        </span>
+                                        <p>{question.stronger_answer}</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                </details>
+                              ))}
+                            </section>
+
+                            {(review.role_signal || review.level_signal) && (
+                              <section className="level-assessment-card">
+                                <div className="level-assessment-icon">▥</div>
+                                <div className="level-assessment-copy">
+                                  <p className="eyebrow">LEVEL ASSESSMENT</p>
+                                  <h3>
+                                    {activeInterview.role ?? "Interview level"}{" "}
+                                    <span>— {hiringSignalLabel(review.hiring_signal)}</span>
+                                  </h3>
+                                  <p>
+                                    {review.level_signal ??
+                                      review.role_signal ??
+                                      "Not enough evidence to infer level."}
+                                  </p>
                                 </div>
-                              )}
-                            </div>
-                          </details>
-                        ))}
-                      </div>
+                                <div className="level-signal-boxes">
+                                  <div>
+                                    <span>Role signal</span>
+                                    <strong>
+                                      {review.role_signal
+                                        ? "Evidence available"
+                                        : "Insufficient evidence"}
+                                    </strong>
+                                  </div>
+                                  <div>
+                                    <span>Level signal</span>
+                                    <strong>
+                                      {review.level_signal
+                                        ? "Assessment available"
+                                        : "Insufficient evidence"}
+                                    </strong>
+                                  </div>
+                                </div>
+                              </section>
+                            )}
+                          </>
+                        );
+                      })()}
 
                       {reviewError && <div className="inline-error">{reviewError}</div>}
 
@@ -746,6 +1014,7 @@ export default function App() {
               )}
             </div>
 
+            {transcriptTab === "transcript" && (
             <aside className="insight-panel">
               <div className="insight-section">
                 <span className="insight-label">INTERVIEW</span>
@@ -767,6 +1036,7 @@ export default function App() {
                 </p>
               </div>
             </aside>
+            )}
           </section>
         </main>
       </div>
