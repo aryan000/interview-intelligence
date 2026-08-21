@@ -14,6 +14,7 @@ from interview_intelligence.domain.models import TranscriptSegment
 from interview_intelligence.engines.base import (
     TranscriptionEngine,
     TranscriptionRequest,
+    TranscriptionResult,
 )
 from interview_intelligence.engines.vocabulary import build_interview_prompt
 from interview_intelligence.pipeline.exporter import InterviewArtifactExporter
@@ -23,6 +24,10 @@ from interview_intelligence.pipeline.models import (
     ProcessedTranscriptSegment,
 )
 from interview_intelligence.quality.detector import TranscriptQualityDetector
+from interview_intelligence.transcription.runner import (
+    ChunkedTranscriptionRunner,
+    ChunkProgress,
+)
 from interview_intelligence.transcription.sanitizer import TranscriptTimelineSanitizer
 
 PipelineProgressCallback = Callable[[JobStage, float, float, str], None]
@@ -42,6 +47,7 @@ class InterviewProcessingPipeline:
         speaker_aligner: SpeakerAligner | None = None,
         role_mapper: SpeakerRoleMapper | None = None,
         timeline_sanitizer: TranscriptTimelineSanitizer | None = None,
+        transcription_runner: ChunkedTranscriptionRunner | None = None,
     ) -> None:
         self.inspector = inspector
         self.preparer = preparer
@@ -52,6 +58,7 @@ class InterviewProcessingPipeline:
         self.speaker_aligner = speaker_aligner or SpeakerAligner()
         self.role_mapper = role_mapper or SpeakerRoleMapper()
         self.timeline_sanitizer = timeline_sanitizer or TranscriptTimelineSanitizer()
+        self.transcription_runner = transcription_runner
 
     def process(
         self,
@@ -86,14 +93,34 @@ class InterviewProcessingPipeline:
         )
 
         transcription_started = time.perf_counter()
-        transcription = self.transcription_engine.transcribe(
-            TranscriptionRequest(
-                audio_path=prepared_path,
-                initial_prompt=build_interview_prompt(
-                    company=request.company,
+        interview_prompt = build_interview_prompt(company=request.company)
+
+        if self.transcription_runner is None:
+            transcription = self.transcription_engine.transcribe(
+                TranscriptionRequest(
+                    audio_path=prepared_path,
+                    initial_prompt=interview_prompt,
+                )
+            )
+        else:
+            chunked = self.transcription_runner.run(
+                canonical_audio_path=prepared_path,
+                duration_seconds=preparation.prepared.duration_seconds,
+                work_dir=work_dir / "transcription",
+                initial_prompt=interview_prompt,
+                progress_listener=lambda progress: self._report_chunk_progress(
+                    progress_callback,
+                    progress,
                 ),
             )
-        )
+            transcription = TranscriptionResult(
+                language=chunked.language,
+                text=chunked.text,
+                segments=chunked.segments,
+                engine_name=chunked.engine_name,
+                model_name=chunked.model_name,
+            )
+
         transcription_seconds = time.perf_counter() - transcription_started
         self._report_progress(
             progress_callback,
@@ -236,6 +263,42 @@ class InterviewProcessingPipeline:
             diarization_seconds=diarization_seconds,
             total_seconds=time.perf_counter() - total_started,
         )
+
+    @staticmethod
+    def _report_chunk_progress(
+        callback: PipelineProgressCallback | None,
+        progress: ChunkProgress,
+    ) -> None:
+        overall_percent = 12.0 + (progress.percent / 100.0) * 58.0
+        processed = InterviewProcessingPipeline._format_audio_time(
+            progress.processed_audio_seconds
+        )
+        total = InterviewProcessingPipeline._format_audio_time(
+            progress.total_audio_seconds
+        )
+        resume_suffix = " · resumed" if progress.resumed else ""
+
+        InterviewProcessingPipeline._report_progress(
+            callback,
+            JobStage.TRANSCRIPTION,
+            overall_percent,
+            progress.processed_audio_seconds,
+            (
+                f"Transcribing chunk {progress.completed_chunks}/"
+                f"{progress.total_chunks} · {processed} / {total}"
+                f"{resume_suffix}"
+            ),
+        )
+
+    @staticmethod
+    def _format_audio_time(seconds: float) -> str:
+        total_seconds = max(0, int(round(seconds)))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+
+        if hours > 0:
+            return f"{hours}:{minutes:02d}:{secs:02d}"
+        return f"{minutes:02d}:{secs:02d}"
 
     @staticmethod
     def _report_progress(

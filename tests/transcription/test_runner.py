@@ -38,7 +38,7 @@ class CountingEngine(TranscriptionEngine):
                 )
             ],
             engine_name="stub",
-            model_name="stub",
+            model_name="stub-model",
         )
 
 
@@ -77,7 +77,10 @@ def test_runner_checkpoints_and_resumes(
     )
 
     assert first.chunk_count == 2
+    assert first.engine_name == "stub"
+    assert first.model_name == "stub-model"
     assert engine.calls == 2
+    assert [item.processed_audio_seconds for item in progress] == [10, 20]
 
     second_progress: list[ChunkProgress] = []
     second = runner.run(
@@ -88,5 +91,7 @@ def test_runner_checkpoints_and_resumes(
     )
 
     assert second.chunk_count == 2
+    assert second.engine_name == "stub"
+    assert second.model_name == "stub-model"
     assert engine.calls == 2
     assert all(item.resumed for item in second_progress)

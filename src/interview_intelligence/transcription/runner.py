@@ -40,6 +40,8 @@ class ChunkedTranscriptionResult:
     text: str
     segments: list[TranscriptSegment]
     language: str | None
+    engine_name: str
+    model_name: str
     elapsed_seconds: float
     chunk_count: int
 
@@ -48,6 +50,8 @@ ProgressListener = Callable[[ChunkProgress], None]
 
 
 class ChunkedTranscriptionRunner:
+    """Transcribe long recordings in restart-safe sequential chunks."""
+
     def __init__(
         self,
         engine: TranscriptionEngine,
@@ -75,6 +79,8 @@ class ChunkedTranscriptionRunner:
         all_segments: list[TranscriptSegment] = []
         texts: list[str] = []
         detected_language: str | None = None
+        engine_name: str | None = None
+        model_name: str | None = None
         started = time.perf_counter()
 
         for chunk in chunks:
@@ -94,6 +100,10 @@ class ChunkedTranscriptionRunner:
 
             if detected_language is None:
                 detected_language = checkpoint.language
+            if engine_name is None:
+                engine_name = checkpoint.engine_name
+            if model_name is None:
+                model_name = checkpoint.model_name
 
             if checkpoint.text:
                 texts.append(checkpoint.text)
@@ -126,6 +136,9 @@ class ChunkedTranscriptionRunner:
             text=" ".join(texts).strip(),
             segments=all_segments,
             language=detected_language,
+            engine_name=engine_name or type(self.engine).__name__,
+            model_name=model_name
+            or str(getattr(self.engine, "model_repo", type(self.engine).__name__)),
             elapsed_seconds=time.perf_counter() - started,
             chunk_count=len(chunks),
         )
@@ -167,8 +180,6 @@ class ChunkedTranscriptionRunner:
             absolute_end = segment.end_seconds + chunk.start_seconds
             midpoint = (absolute_start + absolute_end) / 2.0
 
-            # Overlap supplies context to Whisper, but ownership is determined
-            # by the segment midpoint. This prevents duplicate adjacent output.
             if not (
                 chunk.content_start_seconds
                 <= midpoint
@@ -196,6 +207,8 @@ class ChunkedTranscriptionRunner:
             language=result.language,
             text=text,
             segments=owned_segments,
+            engine_name=result.engine_name,
+            model_name=result.model_name,
         )
 
     def _extract_chunk(

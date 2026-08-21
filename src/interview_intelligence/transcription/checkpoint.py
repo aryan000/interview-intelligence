@@ -12,6 +12,8 @@ class ChunkCheckpoint(BaseModel):
     language: str | None = None
     text: str
     segments: list[TranscriptSegment]
+    engine_name: str | None = None
+    model_name: str | None = None
 
 
 class CheckpointStore:

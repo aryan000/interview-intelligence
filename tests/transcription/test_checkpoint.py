@@ -23,6 +23,8 @@ def test_checkpoint_round_trip(tmp_path: Path) -> None:
                 text="hello",
             )
         ],
+        engine_name="stub",
+        model_name="stub-model",
     )
 
     store.save(checkpoint)
