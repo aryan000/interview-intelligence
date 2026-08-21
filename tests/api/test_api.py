@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -338,3 +338,48 @@ def test_list_interviews_includes_duration_from_latest_job(tmp_path: Path) -> No
     assert response.status_code == 200
     payload = response.json()
     assert payload[0]["duration_seconds"] == 4771.99745
+
+
+
+def test_latest_job_reconciles_stale_running_job(tmp_path: Path) -> None:
+    source = tmp_path / "sample.wav"
+    source.write_bytes(b"audio")
+
+    app = create_app(tmp_path / "app.db", tmp_path / "recordings")
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/v1/interviews",
+        json={
+            "company": "Example",
+            "recruiter_or_interviewer": "Interviewer",
+            "interview_datetime": "2026-08-21T10:00:00+00:00",
+            "source_audio_path": str(source),
+        },
+    )
+    interview_id = created.json()["id"]
+
+    from interview_intelligence.jobs.service import ProcessingJobService
+
+    interview = app.state.interviews.get(interview_id)
+    assert interview is not None
+
+    service = ProcessingJobService(app.state.jobs)
+    job = service.create(interview.id, total_audio_seconds=120)
+    running = service.start(job.id, "Transcribing")
+    app.state.jobs.save(
+        running.model_copy(
+            update={
+                "updated_at": datetime.now(UTC) - timedelta(minutes=5),
+            }
+        )
+    )
+
+    response = client.get(
+        f"/api/v1/interviews/{interview_id}/jobs/latest"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert "interrupted" in payload["error_message"].lower()

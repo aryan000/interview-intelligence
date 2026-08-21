@@ -1,4 +1,5 @@
 from pathlib import Path
+from threading import Event
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -61,7 +62,7 @@ def create_app(
     app.state.recordings_root = resolved_output_root
     app.state.upload_dir = upload_dir
 
-    def coordinator_factory() -> ExistingInterviewProcessingCoordinator:
+    def coordinator_factory(cancel_event: Event) -> ExistingInterviewProcessingCoordinator:
         return ExistingInterviewProcessingCoordinator(
             pipeline=build_local_processing_pipeline(resolved_output_root),
             interview_repository=interviews,
@@ -69,6 +70,7 @@ def create_app(
                 jobs,
                 listener=event_broker.publish_threadsafe,
             ),
+            cancel_event=cancel_event,
         )
 
     app.state.background_manager = BackgroundProcessingManager(coordinator_factory)

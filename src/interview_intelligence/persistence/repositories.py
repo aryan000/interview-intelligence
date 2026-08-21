@@ -166,3 +166,20 @@ class ProcessingJobRepository:
             return None
 
         return ProcessingJobRecord.model_validate(dict(row))
+
+
+    def list_active(self) -> list[ProcessingJobRecord]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM processing_jobs
+                WHERE status IN ('queued', 'running')
+                ORDER BY created_at ASC
+                """
+            ).fetchall()
+
+        return [
+            ProcessingJobRecord.model_validate(dict(row))
+            for row in rows
+        ]

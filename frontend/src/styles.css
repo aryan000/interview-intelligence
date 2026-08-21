@@ -2531,3 +2531,100 @@ h1 {
     flex-direction: column;
   }
 }
+
+
+/* Job lifecycle reliability */
+.processing-action-row {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.processing-action-row .processing-alive {
+  margin-top: 0;
+}
+
+.stop-processing-button {
+  flex: 0 0 auto;
+  padding: 8px 11px;
+  border: 1px solid #efcaca;
+  border-radius: 9px;
+  color: #ad4747;
+  background: #fff8f8;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.stop-processing-button:hover {
+  border-color: #eeb4b4;
+  background: #fff0f0;
+}
+
+.processing-recovery {
+  margin-top: 12px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid #efd7c6;
+  border-radius: 10px;
+  background: #fffaf5;
+}
+
+.processing-recovery strong {
+  display: block;
+  margin-bottom: 3px;
+  color: #74543e;
+  font-size: 10px;
+}
+
+.processing-recovery p {
+  margin: 0;
+  color: #8c7769;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.retry-processing-button {
+  flex: 0 0 auto;
+  min-width: 112px;
+}
+
+.status-failed {
+  color: #a35b32;
+  background: #fff0df;
+}
+
+.status-cancelled {
+  color: #6d7471;
+  background: #eef1f0;
+}
+
+.stop-modal-icon {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #b94c4c;
+  background: #ffe8e8;
+  font-size: 13px;
+}
+
+@media (max-width: 760px) {
+  .processing-action-row,
+  .processing-recovery {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .stop-processing-button,
+  .retry-processing-button {
+    width: 100%;
+  }
+}

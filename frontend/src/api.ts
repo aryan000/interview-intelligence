@@ -114,6 +114,23 @@ export async function uploadInterview(input: {
   return response.json() as Promise<Interview>;
 }
 
+export async function cancelInterviewProcessing(
+  interviewId: string,
+): Promise<JobEvent> {
+  const response = await fetch(
+    `${API_BASE}/interviews/${interviewId}/process/cancel`,
+    { method: "POST" },
+  );
+
+  if (!response.ok) throw await responseError(response);
+
+  const job = await response.json() as JobEvent & { id?: string };
+  return {
+    ...job,
+    job_id: job.job_id ?? job.id ?? "",
+  };
+}
+
 export async function processInterview(
   interviewId: string,
 ): Promise<ProcessInterviewResponse> {

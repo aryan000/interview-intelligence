@@ -139,6 +139,45 @@ class ProcessingJobService:
         self._emit(updated)
         return updated
 
+    def request_cancel(
+        self,
+        job_id: UUID,
+        message: str = "Stopping processing",
+    ) -> ProcessingJobRecord:
+        job = self._require(job_id)
+        if job.status not in {JobStatus.QUEUED, JobStatus.RUNNING}:
+            return job
+
+        now = datetime.now(UTC)
+        updated = job.model_copy(
+            update={
+                "message": message,
+                "updated_at": now,
+            }
+        )
+        self.repository.save(updated)
+        self._emit(updated)
+        return updated
+
+    def cancel(
+        self,
+        job_id: UUID,
+        message: str = "Processing stopped",
+    ) -> ProcessingJobRecord:
+        job = self._require(job_id)
+        now = datetime.now(UTC)
+        updated = job.model_copy(
+            update={
+                "status": JobStatus.CANCELLED,
+                "completed_at": now,
+                "updated_at": now,
+                "message": message,
+            }
+        )
+        self.repository.save(updated)
+        self._emit(updated)
+        return updated
+
     def _require(self, job_id: UUID) -> ProcessingJobRecord:
         job = self.repository.get(job_id)
         if job is None:

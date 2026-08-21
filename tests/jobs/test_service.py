@@ -95,3 +95,21 @@ def test_job_stage_cannot_move_backwards(tmp_path: Path) -> None:
             processed_audio_seconds=60,
             total_audio_seconds=120,
         )
+
+
+
+def test_cancel_marks_job_terminal(tmp_path: Path) -> None:
+    events: list[JobProgressEvent] = []
+    fixture = build_service(tmp_path, events)
+
+    job = fixture.service.create(
+        fixture.interview_id,
+        total_audio_seconds=120,
+    )
+    fixture.service.start(job.id, "Processing")
+
+    cancelled = fixture.service.cancel(job.id)
+
+    assert cancelled.status == JobStatus.CANCELLED
+    assert cancelled.completed_at is not None
+    assert cancelled.message == "Processing stopped"

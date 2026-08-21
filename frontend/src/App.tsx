@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   analyzeInterview,
+  cancelInterviewProcessing,
   deleteInterview,
   getAudioUrl,
   getInterviewReview,
@@ -242,6 +243,9 @@ export default function App() {
   const [jobError, setJobError] = useState<string | null>(null);
   const [processingStartedAt, setProcessingStartedAt] = useState<Date | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState(false);
+  const [isCancellingProcessing, setIsCancellingProcessing] = useState(false);
+  const [isRetryingProcessing, setIsRetryingProcessing] = useState(false);
 
   const [transcriptLines, setTranscriptLines] = useState<TranscriptLine[]>([]);
   const [isTranscriptLoading, setIsTranscriptLoading] = useState(false);
@@ -276,11 +280,17 @@ export default function App() {
       try {
         const loaded = await refreshInterviews();
 
+        let recoveryCandidate:
+          | { interview: Interview; job: JobEvent }
+          | null = null;
+
         for (const interview of loaded) {
           const latestJob = await getLatestInterviewJob(interview.id);
+          if (!latestJob) continue;
+
           if (
-            latestJob &&
-            (latestJob.status === "queued" || latestJob.status === "running")
+            latestJob.status === "queued" ||
+            latestJob.status === "running"
           ) {
             setActiveInterview(interview);
             setJobEvent(latestJob);
@@ -298,14 +308,38 @@ export default function App() {
               latestJob.job_id,
               (nextEvent) => {
                 setJobEvent(nextEvent);
-                if (nextEvent.status === "completed") {
+                if (
+                  nextEvent.status === "completed" ||
+                  nextEvent.status === "failed" ||
+                  nextEvent.status === "cancelled"
+                ) {
                   void refreshInterviews();
                 }
               },
               (socketError) => setJobError(socketError.message),
             );
+            recoveryCandidate = null;
             break;
           }
+
+          if (
+            !interview.artifact_root_path &&
+            (latestJob.status === "failed" ||
+              latestJob.status === "cancelled") &&
+            recoveryCandidate === null
+          ) {
+            recoveryCandidate = {
+              interview,
+              job: latestJob,
+            };
+          }
+        }
+
+        if (recoveryCandidate) {
+          setActiveInterview(recoveryCandidate.interview);
+          setJobEvent(recoveryCandidate.job);
+          setProcessingStartedAt(null);
+          setElapsedSeconds(0);
         }
       } catch (caught: unknown) {
         setError(caught instanceof Error ? caught.message : "Unable to load interviews.");
@@ -320,7 +354,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!processingStartedAt || !jobEvent || jobEvent.status === "completed" || jobEvent.status === "failed") {
+    if (!processingStartedAt || !jobEvent || jobEvent.status === "completed" ||
+        jobEvent.status === "failed" ||
+        jobEvent.status === "cancelled") {
       return;
     }
 
@@ -396,6 +432,75 @@ export default function App() {
 
     audio.currentTime = seconds;
     void audio.play();
+  };
+
+  const handleCancelProcessing = async () => {
+    if (!activeInterview || !jobEvent) return;
+
+    setIsCancellingProcessing(true);
+    setJobError(null);
+
+    try {
+      const nextJob = await cancelInterviewProcessing(activeInterview.id);
+      setJobEvent(nextJob);
+      setIsCancelConfirmOpen(false);
+    } catch (caught: unknown) {
+      setJobError(
+        caught instanceof Error
+          ? caught.message
+          : "Unable to stop processing.",
+      );
+    } finally {
+      setIsCancellingProcessing(false);
+    }
+  };
+
+  const handleRetryProcessing = async () => {
+    if (!activeInterview) return;
+
+    setIsRetryingProcessing(true);
+    setJobError(null);
+
+    try {
+      const processResult = await processInterview(activeInterview.id);
+      const startedAt = new Date();
+
+      setProcessingStartedAt(startedAt);
+      setElapsedSeconds(0);
+      setJobEvent({
+        job_id: processResult.job_id,
+        interview_id: processResult.interview_id,
+        status: processResult.status as JobEvent["status"],
+        stage: "inspection",
+        progress_percent: 0,
+        processed_audio_seconds: 0,
+        total_audio_seconds: activeInterview.duration_seconds ?? 0,
+        message: "Restarting processing",
+      });
+
+      subscribeToJob(
+        processResult.job_id,
+        (nextEvent) => {
+          setJobEvent(nextEvent);
+          if (
+            nextEvent.status === "completed" ||
+            nextEvent.status === "failed" ||
+            nextEvent.status === "cancelled"
+          ) {
+            void refreshInterviews();
+          }
+        },
+        (socketError) => setJobError(socketError.message),
+      );
+    } catch (caught: unknown) {
+      setJobError(
+        caught instanceof Error
+          ? caught.message
+          : "Unable to restart processing.",
+      );
+    } finally {
+      setIsRetryingProcessing(false);
+    }
   };
 
   const handleDeleteInterview = async () => {
@@ -1118,8 +1223,10 @@ export default function App() {
                     {jobEvent.status === "completed"
                       ? "Interview ready"
                       : jobEvent.status === "failed"
-                        ? "Processing failed"
-                        : "Processing interview"}
+                        ? "Processing interrupted"
+                        : jobEvent.status === "cancelled"
+                          ? "Processing stopped"
+                          : "Processing interview"}
                   </h2>
                   <p>{jobEvent.message ?? `${stageLabel(jobEvent.stage)} in progress`}</p>
                 </div>
@@ -1173,10 +1280,47 @@ export default function App() {
                 </div>
               </div>
 
-              {jobEvent.status !== "completed" && jobEvent.status !== "failed" && (
-                <div className="processing-alive">
-                  <span className="alive-dot" />
-                  Processing is active. The timer continues even while the stage percentage is unchanged.
+              {(jobEvent.status === "queued" || jobEvent.status === "running") && (
+                <div className="processing-action-row">
+                  <div className="processing-alive">
+                    <span className="alive-dot" />
+                    Processing is active. The timer continues even while the
+                    stage percentage is unchanged.
+                  </div>
+
+                  <button
+                    className="stop-processing-button"
+                    type="button"
+                    onClick={() => setIsCancelConfirmOpen(true)}
+                  >
+                    Stop processing
+                  </button>
+                </div>
+              )}
+
+              {(jobEvent.status === "failed" || jobEvent.status === "cancelled") && (
+                <div className="processing-recovery">
+                  <div>
+                    <strong>
+                      {jobEvent.status === "failed"
+                        ? "The worker is no longer running."
+                        : "The uploaded recording has been preserved."}
+                    </strong>
+                    <p>
+                      {jobEvent.error_message ??
+                        jobEvent.message ??
+                        "You can restart processing from this interview."}
+                    </p>
+                  </div>
+
+                  <button
+                    className="primary-button retry-processing-button"
+                    type="button"
+                    disabled={isRetryingProcessing}
+                    onClick={() => void handleRetryProcessing()}
+                  >
+                    {isRetryingProcessing ? "Restarting…" : "Process again"}
+                  </button>
                 </div>
               )}
 
@@ -1287,12 +1431,24 @@ export default function App() {
                   <span>
                     {activeInterview?.id === interview.id &&
                     jobEvent &&
-                    jobEvent.status !== "completed" ? (
+                    jobEvent.status !== "completed" &&
+                    (jobEvent.status === "queued" ||
+                      jobEvent.status === "running") ? (
                       <span className="status-stack">
                         <span className="status-pill status-processing">
                           Processing
                         </span>
                         <small>{Math.round(jobEvent.progress_percent)}% complete</small>
+                      </span>
+                    ) : activeInterview?.id === interview.id &&
+                      jobEvent?.status === "failed" ? (
+                      <span className="status-pill status-failed">
+                        Interrupted
+                      </span>
+                    ) : activeInterview?.id === interview.id &&
+                      jobEvent?.status === "cancelled" ? (
+                      <span className="status-pill status-cancelled">
+                        Stopped
                       </span>
                     ) : (
                       <span
@@ -1364,6 +1520,48 @@ export default function App() {
           )}
         </section>
       </main>
+
+      {isCancelConfirmOpen && activeInterview && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="delete-modal stop-modal" role="dialog" aria-modal="true">
+            <div className="delete-modal-heading">
+              <div className="stop-modal-icon">■</div>
+              <div>
+                <h2>Stop processing?</h2>
+                <p>The recording will be preserved.</p>
+              </div>
+            </div>
+
+            <p className="delete-warning">
+              Interview processing will stop at the next safe pipeline boundary.
+              The current ML step may take a moment to finish before cancellation
+              completes.
+            </p>
+            <p className="delete-safe-note">
+              You can start processing again later.
+            </p>
+
+            <div className="modal-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={isCancellingProcessing}
+                onClick={() => setIsCancelConfirmOpen(false)}
+              >
+                Keep processing
+              </button>
+              <button
+                className="danger-button"
+                type="button"
+                disabled={isCancellingProcessing}
+                onClick={() => void handleCancelProcessing()}
+              >
+                {isCancellingProcessing ? "Stopping…" : "Stop processing"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {deleteTarget && (
         <div className="modal-backdrop" role="presentation">

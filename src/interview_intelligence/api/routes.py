@@ -1,6 +1,6 @@
 import asyncio
 import shutil
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, cast
 from uuid import UUID, uuid4
@@ -87,6 +87,39 @@ def _delete_managed_path(path: Path, root: Path) -> None:
         shutil.rmtree(path)
     elif path.is_file():
         path.unlink()
+
+
+STALE_JOB_GRACE_PERIOD = timedelta(seconds=30)
+
+
+def _reconcile_stale_job(
+    interview_id: UUID,
+    request: Request,
+) -> ProcessingJobRecord | None:
+    repository = jobs(request)
+    latest = repository.latest_for_interview(interview_id)
+
+    if latest is None:
+        return None
+
+    has_active_worker = background_manager(request).is_active(interview_id)
+    job_age = datetime.now(UTC) - latest.updated_at
+
+    if (
+        latest.status in {JobStatus.QUEUED, JobStatus.RUNNING}
+        and not has_active_worker
+        and job_age >= STALE_JOB_GRACE_PERIOD
+    ):
+        service = ProcessingJobService(
+            repository,
+            listener=broker(request).publish_threadsafe,
+        )
+        latest = service.fail(
+            latest.id,
+            "Processing was interrupted because the backend stopped or restarted.",
+        )
+
+    return latest
 
 
 def _to_job_response(job: ProcessingJobRecord) -> JobResponse:
@@ -279,7 +312,7 @@ def build_router() -> APIRouter:
         record = _require_interview(interview_id, request)
 
         job_repository = jobs(request)
-        latest = job_repository.latest_for_interview(interview_id)
+        latest = _reconcile_stale_job(interview_id, request)
         if latest is not None and latest.status in {
             JobStatus.QUEUED,
             JobStatus.RUNNING,
@@ -321,6 +354,47 @@ def build_router() -> APIRouter:
             status=job.status,
         )
 
+    @router.post(
+        "/interviews/{interview_id}/process/cancel",
+        response_model=JobResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def cancel_processing(
+        interview_id: UUID,
+        request: Request,
+    ) -> JobResponse:
+        _require_interview(interview_id, request)
+
+        repository = jobs(request)
+        latest = _reconcile_stale_job(interview_id, request)
+        if latest is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Processing job not found",
+            )
+
+        if latest.status not in {JobStatus.QUEUED, JobStatus.RUNNING}:
+            return _to_job_response(latest)
+
+        manager = background_manager(request)
+        service = ProcessingJobService(
+            repository,
+            listener=broker(request).publish_threadsafe,
+        )
+
+        if not manager.request_cancel(interview_id):
+            interrupted = service.fail(
+                latest.id,
+                "Processing was interrupted because no active worker was found.",
+            )
+            return _to_job_response(interrupted)
+
+        requested = service.request_cancel(
+            latest.id,
+            "Stopping processing after the current ML step",
+        )
+        return _to_job_response(requested)
+
     @router.get(
         "/jobs/{job_id}",
         response_model=JobResponse,
@@ -343,7 +417,7 @@ def build_router() -> APIRouter:
         request: Request,
     ) -> JobResponse:
         _require_interview(interview_id, request)
-        job = jobs(request).latest_for_interview(interview_id)
+        job = _reconcile_stale_job(interview_id, request)
         if job is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

@@ -1,4 +1,5 @@
 from pathlib import Path
+from threading import Event
 from uuid import UUID
 
 from interview_intelligence.domain.enums import JobStage
@@ -12,6 +13,10 @@ from interview_intelligence.pipeline.models import (
 from interview_intelligence.pipeline.processor import InterviewProcessingPipeline
 
 
+class ProcessingCancelled(RuntimeError):
+    pass
+
+
 class ExistingInterviewProcessingCoordinator:
     """Process an already-persisted interview and an already-created job."""
 
@@ -20,10 +25,12 @@ class ExistingInterviewProcessingCoordinator:
         pipeline: InterviewProcessingPipeline,
         interview_repository: InterviewRepository,
         job_service: ProcessingJobService,
+        cancel_event: Event | None = None,
     ) -> None:
         self.pipeline = pipeline
         self.interview_repository = interview_repository
         self.job_service = job_service
+        self.cancel_event = cancel_event or Event()
 
     def run(
         self,
@@ -35,6 +42,8 @@ class ExistingInterviewProcessingCoordinator:
         source_metadata = self.pipeline.inspector.inspect(request.source_audio)
 
         try:
+            self._raise_if_cancelled()
+
             self.job_service.start(job_id, "Inspecting recording")
             self.job_service.update_progress(
                 job_id,
@@ -44,6 +53,9 @@ class ExistingInterviewProcessingCoordinator:
                 total_audio_seconds=source_metadata.duration_seconds,
                 message="Recording inspected",
             )
+
+            self._raise_if_cancelled()
+
             self.job_service.update_progress(
                 job_id,
                 JobStage.PREPROCESSING,
@@ -59,6 +71,7 @@ class ExistingInterviewProcessingCoordinator:
                 processed_audio_seconds: float,
                 message: str,
             ) -> None:
+                self._raise_if_cancelled()
                 self.job_service.update_progress(
                     job_id,
                     stage,
@@ -73,6 +86,7 @@ class ExistingInterviewProcessingCoordinator:
                 progress_callback=report_progress,
             )
 
+            self._raise_if_cancelled()
 
             self.interview_repository.set_artifact_root(
                 interview.id,
@@ -81,9 +95,19 @@ class ExistingInterviewProcessingCoordinator:
             self.job_service.complete(job_id)
             return result
 
+        except ProcessingCancelled:
+            self.job_service.cancel(
+                job_id,
+                "Processing stopped by user",
+            )
+            raise
         except Exception as exc:
             self.job_service.fail(job_id, str(exc))
             raise
+
+    def _raise_if_cancelled(self) -> None:
+        if self.cancel_event.is_set():
+            raise ProcessingCancelled("Processing cancelled by user")
 
     def _require_interview(self, interview_id: UUID) -> InterviewRecord:
         interview = self.interview_repository.get(interview_id)
