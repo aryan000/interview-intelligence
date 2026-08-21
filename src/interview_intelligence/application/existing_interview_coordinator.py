@@ -107,6 +107,12 @@ class ExistingInterviewProcessingCoordinator:
                 interview.id,
                 str(result.artifacts.root_dir),
             )
+            self.interview_repository.set_processing_metrics(
+                interview.id,
+                transcription_seconds=result.transcription_seconds,
+                diarization_seconds=result.diarization_seconds,
+                total_processing_seconds=result.total_seconds,
+            )
             self.job_service.complete(job_id)
             return result
 

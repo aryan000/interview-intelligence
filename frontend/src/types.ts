@@ -6,9 +6,13 @@ export type Interview = {
   sequence_number: number;
   role: string | null;
   target_level: string | null;
+  round_type: string | null;
   source_audio_path: string;
   artifact_root_path: string | null;
   duration_seconds: number | null;
+  transcription_seconds: number | null;
+  diarization_seconds: number | null;
+  total_processing_seconds: number | null;
 };
 
 export type ProcessInterviewResponse = {

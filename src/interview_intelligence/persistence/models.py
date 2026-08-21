@@ -14,8 +14,12 @@ class InterviewRecord(BaseModel):
     sequence_number: int = Field(ge=1)
     role: str | None = None
     target_level: str | None = None
+    round_type: str | None = None
     source_audio_path: str
     artifact_root_path: str | None = None
+    transcription_seconds: float | None = Field(default=None, ge=0)
+    diarization_seconds: float | None = Field(default=None, ge=0)
+    total_processing_seconds: float | None = Field(default=None, ge=0)
     created_at: datetime
     updated_at: datetime
 

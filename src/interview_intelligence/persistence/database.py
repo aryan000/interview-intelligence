@@ -12,8 +12,12 @@ CREATE TABLE IF NOT EXISTS interviews (
     sequence_number INTEGER NOT NULL,
     role TEXT,
     target_level TEXT,
+    round_type TEXT,
     source_audio_path TEXT NOT NULL,
     artifact_root_path TEXT,
+    transcription_seconds REAL,
+    diarization_seconds REAL,
+    total_processing_seconds REAL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -43,6 +47,20 @@ ON processing_jobs(status);
 """
 
 
+INTERVIEW_MIGRATIONS: dict[str, str] = {
+    "round_type": "ALTER TABLE interviews ADD COLUMN round_type TEXT",
+    "transcription_seconds": (
+        "ALTER TABLE interviews ADD COLUMN transcription_seconds REAL"
+    ),
+    "diarization_seconds": (
+        "ALTER TABLE interviews ADD COLUMN diarization_seconds REAL"
+    ),
+    "total_processing_seconds": (
+        "ALTER TABLE interviews ADD COLUMN total_processing_seconds REAL"
+    ),
+}
+
+
 class SQLiteDatabase:
     def __init__(self, path: Path) -> None:
         self.path = path.expanduser().resolve()
@@ -51,6 +69,20 @@ class SQLiteDatabase:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            self._apply_interview_migrations(connection)
+
+    @staticmethod
+    def _apply_interview_migrations(connection: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(interviews)"
+            ).fetchall()
+        }
+
+        for column, statement in INTERVIEW_MIGRATIONS.items():
+            if column not in columns:
+                connection.execute(statement)
 
     def connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path)

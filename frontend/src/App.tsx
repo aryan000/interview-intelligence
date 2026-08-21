@@ -12,6 +12,7 @@ import {
   listInterviews,
   processInterview,
   subscribeToJob,
+  updateInterview,
   uploadInterview,
 } from "./api";
 import type { Interview, InterviewReview, JobEvent, TranscriptLine } from "./types";
@@ -23,8 +24,22 @@ type UploadFormState = {
   sequence: number;
   role: string;
   targetLevel: string;
+  roundType: string;
   audio: File | null;
 };
+
+type EditFormState = {
+  company: string;
+  interviewer: string;
+  datetime: string;
+  sequence: number;
+  role: string;
+  targetLevel: string;
+  roundType: string;
+};
+
+type SortField = "company" | "round" | "date";
+type SortDirection = "asc" | "desc";
 
 type Screen = "workspace" | "transcript";
 type TranscriptTab = "transcript" | "review";
@@ -36,8 +51,31 @@ const emptyUploadForm: UploadFormState = {
   sequence: 1,
   role: "Engineering Manager",
   targetLevel: "",
+  roundType: "Hiring Manager",
   audio: null,
 };
+
+const ROUND_TYPES = [
+  "Recruiter Call",
+  "Screening",
+  "Hiring Manager Intro",
+  "Hiring Manager",
+  "Leadership",
+  "People Management",
+  "HLD",
+  "LLD",
+  "Coding",
+  "Bar Raiser",
+  "Director / CTO",
+  "Other",
+] as const;
+
+function toDateTimeLocal(value: string): string {
+  const date = new Date(value);
+  const offset = date.getTimezoneOffset();
+  const local = new Date(date.getTime() - offset * 60_000);
+  return local.toISOString().slice(0, 16);
+}
 
 function formatDuration(value: number | null): string {
   if (value === null || !Number.isFinite(value)) {
@@ -265,6 +303,19 @@ export default function App() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  const [searchQuery, setSearchQuery] = useState("");
+  const [roundFilter, setRoundFilter] = useState("all");
+  const [sortField, setSortField] = useState<SortField>("date");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [groupByCompany, setGroupByCompany] = useState(
+    () => window.localStorage.getItem("ii-group-by-company") === "true",
+  );
+
+  const [editTarget, setEditTarget] = useState<Interview | null>(null);
+  const [editForm, setEditForm] = useState<EditFormState | null>(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
   const isSidebarExpanded = isSidebarPinnedOpen;
 
   const refreshInterviews = async (): Promise<Interview[]> => {
@@ -374,6 +425,88 @@ export default function App() {
     () => interviews.filter((item) => item.artifact_root_path).length,
     [interviews],
   );
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      "ii-group-by-company",
+      String(groupByCompany),
+    );
+  }, [groupByCompany]);
+
+  const visibleInterviews = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+
+    const filtered = interviews.filter((interview) => {
+      const matchesSearch =
+        query.length === 0 ||
+        [
+          interview.company,
+          interview.recruiter_or_interviewer,
+          interview.round_type ?? "",
+          interview.role ?? "",
+          interview.target_level ?? "",
+        ].some((value) => value.toLowerCase().includes(query));
+
+      const matchesRound =
+        roundFilter === "all" ||
+        (interview.round_type ?? "Other") === roundFilter;
+
+      return matchesSearch && matchesRound;
+    });
+
+    return [...filtered].sort((left, right) => {
+      let comparison = 0;
+
+      if (sortField === "company") {
+        comparison = left.company.localeCompare(right.company);
+      } else if (sortField === "round") {
+        comparison = (left.round_type ?? "Other").localeCompare(
+          right.round_type ?? "Other",
+        );
+      } else {
+        comparison =
+          new Date(left.interview_datetime).getTime() -
+          new Date(right.interview_datetime).getTime();
+      }
+
+      return sortDirection === "asc" ? comparison : -comparison;
+    });
+  }, [
+    interviews,
+    roundFilter,
+    searchQuery,
+    sortDirection,
+    sortField,
+  ]);
+
+  const groupedInterviews = useMemo(() => {
+    const grouped = new Map<string, Interview[]>();
+
+    for (const interview of visibleInterviews) {
+      const existing = grouped.get(interview.company) ?? [];
+      existing.push(interview);
+      grouped.set(interview.company, existing);
+    }
+
+    return [...grouped.entries()].sort(([left], [right]) =>
+      left.localeCompare(right),
+    );
+  }, [visibleInterviews]);
+
+  const toggleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+
+    setSortField(field);
+    setSortDirection(field === "date" ? "desc" : "asc");
+  };
+
+  const sortIndicator = (field: SortField): string => {
+    if (sortField !== field) return "↕";
+    return sortDirection === "asc" ? "↑" : "↓";
+  };
 
   const openTranscript = async (interview: Interview) => {
     if (!interview.artifact_root_path) {
@@ -503,6 +636,70 @@ export default function App() {
     }
   };
 
+  const openEditInterview = (interview: Interview) => {
+    setEditTarget(interview);
+    setEditError(null);
+    setEditForm({
+      company: interview.company,
+      interviewer: interview.recruiter_or_interviewer,
+      datetime: toDateTimeLocal(interview.interview_datetime),
+      sequence: interview.sequence_number,
+      role: interview.role ?? "",
+      targetLevel: interview.target_level ?? "",
+      roundType: interview.round_type ?? "Other",
+    });
+  };
+
+  const closeEditInterview = () => {
+    if (isSavingEdit) return;
+    setEditTarget(null);
+    setEditForm(null);
+    setEditError(null);
+  };
+
+  const handleEditInterview = async (
+    event: FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault();
+    if (!editTarget || !editForm) return;
+
+    setIsSavingEdit(true);
+    setEditError(null);
+
+    try {
+      const updated = await updateInterview(editTarget.id, {
+        company: editForm.company,
+        recruiterOrInterviewer: editForm.interviewer,
+        interviewDatetime: editForm.datetime,
+        sequenceNumber: editForm.sequence,
+        role: editForm.role,
+        targetLevel: editForm.targetLevel,
+        roundType: editForm.roundType,
+      });
+
+      setInterviews((current) =>
+        current.map((interview) =>
+          interview.id === updated.id ? updated : interview,
+        ),
+      );
+
+      if (activeInterview?.id === updated.id) {
+        setActiveInterview(updated);
+      }
+
+      setEditTarget(null);
+      setEditForm(null);
+    } catch (caught: unknown) {
+      setEditError(
+        caught instanceof Error
+          ? caught.message
+          : "Unable to update interview.",
+      );
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
   const handleDeleteInterview = async () => {
     if (!deleteTarget) return;
 
@@ -557,6 +754,7 @@ export default function App() {
         sequenceNumber: uploadForm.sequence,
         role: uploadForm.role,
         targetLevel: uploadForm.targetLevel,
+        roundType: uploadForm.roundType,
       });
 
       const processResult = await processInterview(interview.id);
@@ -1148,6 +1346,177 @@ export default function App() {
     );
   }
 
+  const renderInterviewRow = (
+    interview: Interview,
+    grouped: boolean,
+  ) => (
+    <div
+      className={`table-row interview-row ${grouped ? "grouped-interview-row" : ""}`}
+      key={interview.id}
+      role={interview.artifact_root_path ? "button" : undefined}
+      tabIndex={interview.artifact_root_path ? 0 : -1}
+      onClick={() => {
+        if (interview.artifact_root_path) {
+          void openTranscript(interview);
+        }
+      }}
+      onKeyDown={(event) => {
+        if (
+          interview.artifact_root_path &&
+          (event.key === "Enter" || event.key === " ")
+        ) {
+          event.preventDefault();
+          void openTranscript(interview);
+        }
+      }}
+    >
+      <span className="interview-primary">
+        {!grouped && (
+          <span className="company-avatar">
+            {interview.company.slice(0, 1).toUpperCase()}
+          </span>
+        )}
+        <span>
+          <strong>{interview.company}</strong>
+          <small>
+            {interview.role ?? "Interview"} · Round {interview.sequence_number}
+          </small>
+        </span>
+      </span>
+
+      <span>
+        <span className="round-pill">
+          {interview.round_type ?? "Other"}
+        </span>
+      </span>
+
+      <span className="interviewer-cell">
+        {interview.recruiter_or_interviewer}
+        <button
+          className="inline-edit-button"
+          type="button"
+          aria-label={`Edit ${interview.company} interview`}
+          title="Edit interview details"
+          onClick={(event) => {
+            event.stopPropagation();
+            openEditInterview(interview);
+          }}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="m4 16.5-.5 4 4-.5L18.8 8.7l-3.5-3.5L4 16.5Z" />
+            <path d="m13.8 6.7 3.5 3.5" />
+          </svg>
+        </button>
+      </span>
+
+      <span>{formatDate(interview.interview_datetime)}</span>
+
+      <span className="duration-cell">
+        <svg
+          aria-hidden="true"
+          className="duration-icon"
+          viewBox="0 0 24 24"
+        >
+          <circle cx="12" cy="12" r="8.5" />
+          <path d="M12 7.5v5l3.25 2" />
+        </svg>
+        {formatDuration(interview.duration_seconds)}
+      </span>
+
+      <span className="transcription-time-cell">
+        {formatDuration(interview.transcription_seconds)}
+      </span>
+
+      <span>
+        {activeInterview?.id === interview.id &&
+        jobEvent &&
+        (jobEvent.status === "queued" || jobEvent.status === "running") ? (
+          <span className="status-stack">
+            <span className="status-pill status-processing">
+              Processing
+            </span>
+            <small>{Math.round(jobEvent.progress_percent)}% complete</small>
+          </span>
+        ) : activeInterview?.id === interview.id &&
+          jobEvent?.status === "failed" ? (
+          <span className="status-pill status-failed">
+            Interrupted
+          </span>
+        ) : activeInterview?.id === interview.id &&
+          jobEvent?.status === "cancelled" ? (
+          <span className="status-pill status-cancelled">
+            Stopped
+          </span>
+        ) : (
+          <span
+            className={
+              interview.artifact_root_path
+                ? "status-pill status-ready"
+                : "status-pill status-pending"
+            }
+          >
+            {statusLabel(interview)}
+          </span>
+        )}
+      </span>
+
+      <span className="row-actions">
+        {interview.artifact_root_path && (
+          <button
+            className="row-icon-button"
+            type="button"
+            aria-label={`Open ${interview.company} interview`}
+            title="Open interview"
+            onClick={(event) => {
+              event.stopPropagation();
+              void openTranscript(interview);
+            }}
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M2.8 12s3.3-5.5 9.2-5.5S21.2 12 21.2 12 17.9 17.5 12 17.5 2.8 12 2.8 12Z" />
+              <circle cx="12" cy="12" r="2.6" />
+            </svg>
+          </button>
+        )}
+
+        <button
+          className="row-icon-button"
+          type="button"
+          aria-label={`Edit ${interview.company} interview details`}
+          title="Edit interview"
+          onClick={(event) => {
+            event.stopPropagation();
+            openEditInterview(interview);
+          }}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="m4 16.5-.5 4 4-.5L18.8 8.7l-3.5-3.5L4 16.5Z" />
+            <path d="m13.8 6.7 3.5 3.5" />
+          </svg>
+        </button>
+
+        <button
+          className="delete-row-button"
+          type="button"
+          aria-label={`Delete ${interview.company} interview`}
+          title="Delete interview"
+          onClick={(event) => {
+            event.stopPropagation();
+            setDeleteError(null);
+            setDeleteTarget(interview);
+          }}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M4.5 7h15" />
+            <path d="M9 7V4.8h6V7" />
+            <path d="M7 7l.7 12h8.6L17 7" />
+            <path d="M10 10.5v5.5M14 10.5v5.5" />
+          </svg>
+        </button>
+      </span>
+    </div>
+  );
+
   return (
     <div className={`app-shell ${isSidebarPinnedOpen ? "shell-sidebar-expanded" : "shell-sidebar-collapsed"}`}>
       <aside
@@ -1347,15 +1716,51 @@ export default function App() {
           </div>
         </section>
 
-        <section className="content-card">
-          <div className="section-header">
+        <section className="content-card interview-library-card">
+          <div className="section-header library-header">
             <div>
-              <h2>Recent interviews</h2>
-              <p>Newest rounds appear first.</p>
+              <h2>Interviews</h2>
+              <p>Search, sort and organize every interview round.</p>
             </div>
-            <div className="search-shell">
-              <span>⌕</span>
-              <input aria-label="Search interviews" placeholder="Search company or interviewer" />
+
+            <div className="library-toolbar">
+              <div className="search-shell">
+                <span>⌕</span>
+                <input
+                  aria-label="Search interviews"
+                  placeholder="Search company, interviewer, round or role"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                />
+              </div>
+
+              <select
+                aria-label="Filter by interview round"
+                className="library-select"
+                value={roundFilter}
+                onChange={(event) => setRoundFilter(event.target.value)}
+              >
+                <option value="all">All rounds</option>
+                {ROUND_TYPES.map((roundType) => (
+                  <option key={roundType} value={roundType}>
+                    {roundType}
+                  </option>
+                ))}
+              </select>
+
+              <label className="group-toggle">
+                <input
+                  type="checkbox"
+                  checked={groupByCompany}
+                  onChange={(event) =>
+                    setGroupByCompany(event.target.checked)
+                  }
+                />
+                <span className="toggle-track">
+                  <span className="toggle-thumb" />
+                </span>
+                <span>Group by company</span>
+              </label>
             </div>
           </div>
 
@@ -1372,150 +1777,65 @@ export default function App() {
               <strong>No interviews yet</strong>
               <span>Add your first recording to start building your feedback loop.</span>
             </div>
+          ) : visibleInterviews.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon">⌕</div>
+              <strong>No matching interviews</strong>
+              <span>Try a different company, interviewer, round or role.</span>
+            </div>
           ) : (
-            <div className="interview-table">
+            <div className="interview-table interview-library-table">
               <div className="table-row table-head">
-                <span>Interview</span>
+                <button
+                  className="sortable-header"
+                  type="button"
+                  onClick={() => toggleSort("company")}
+                >
+                  Company <span>{sortIndicator("company")}</span>
+                </button>
+                <button
+                  className="sortable-header"
+                  type="button"
+                  onClick={() => toggleSort("round")}
+                >
+                  Round <span>{sortIndicator("round")}</span>
+                </button>
                 <span>Interviewer</span>
-                <span>Date</span>
+                <button
+                  className="sortable-header"
+                  type="button"
+                  onClick={() => toggleSort("date")}
+                >
+                  Date <span>{sortIndicator("date")}</span>
+                </button>
                 <span>Duration</span>
+                <span>Transcription</span>
                 <span>Status</span>
                 <span>Actions</span>
               </div>
 
-              {interviews.map((interview) => (
-                <div
-                  className="table-row interview-row"
-                  key={interview.id}
-                  role={interview.artifact_root_path ? "button" : undefined}
-                  tabIndex={interview.artifact_root_path ? 0 : -1}
-                  onClick={() => {
-                    if (interview.artifact_root_path) {
-                      void openTranscript(interview);
-                    }
-                  }}
-                  onKeyDown={(event) => {
-                    if (
-                      interview.artifact_root_path &&
-                      (event.key === "Enter" || event.key === " ")
-                    ) {
-                      event.preventDefault();
-                      void openTranscript(interview);
-                    }
-                  }}
-                >
-                  <span className="interview-primary">
-                    <span className="company-avatar">
-                      {interview.company.slice(0, 1).toUpperCase()}
-                    </span>
-                    <span>
-                      <strong>{interview.company}</strong>
-                      <small>
-                        {interview.role ?? "Interview"} · Round {interview.sequence_number}
-                      </small>
-                    </span>
-                  </span>
-                  <span>{interview.recruiter_or_interviewer}</span>
-                  <span>{formatDate(interview.interview_datetime)}</span>
-                  <span className="duration-cell">
-                    <svg
-                      aria-hidden="true"
-                      className="duration-icon"
-                      viewBox="0 0 24 24"
+              {(groupByCompany
+                ? groupedInterviews.flatMap(([company, companyInterviews]) => [
+                    <div
+                      className="company-group-row"
+                      key={`group-${company}`}
                     >
-                      <circle cx="12" cy="12" r="8.5" />
-                      <path d="M12 7.5v5l3.25 2" />
-                    </svg>
-                    {formatDuration(interview.duration_seconds)}
-                  </span>
-                  <span>
-                    {activeInterview?.id === interview.id &&
-                    jobEvent &&
-                    jobEvent.status !== "completed" &&
-                    (jobEvent.status === "queued" ||
-                      jobEvent.status === "running") ? (
-                      <span className="status-stack">
-                        <span className="status-pill status-processing">
-                          Processing
-                        </span>
-                        <small>{Math.round(jobEvent.progress_percent)}% complete</small>
+                      <span className="company-avatar company-avatar-small">
+                        {company.slice(0, 1).toUpperCase()}
                       </span>
-                    ) : activeInterview?.id === interview.id &&
-                      jobEvent?.status === "failed" ? (
-                      <span className="status-pill status-failed">
-                        Interrupted
+                      <strong>{company}</strong>
+                      <span>
+                        {companyInterviews.length} interview
+                        {companyInterviews.length === 1 ? "" : "s"}
                       </span>
-                    ) : activeInterview?.id === interview.id &&
-                      jobEvent?.status === "cancelled" ? (
-                      <span className="status-pill status-cancelled">
-                        Stopped
-                      </span>
-                    ) : (
-                      <span
-                        className={
-                          interview.artifact_root_path
-                            ? "status-pill status-ready"
-                            : "status-pill status-pending"
-                        }
-                      >
-                        {statusLabel(interview)}
-                      </span>
-                    )}
-                  </span>
-                  <span className="row-actions">
-                    {interview.artifact_root_path && (
-                      <button
-                        className="row-icon-button"
-                        type="button"
-                        aria-label={`Open ${interview.company} interview`}
-                        title="Open interview"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void openTranscript(interview);
-                        }}
-                      >
-                        <svg aria-hidden="true" viewBox="0 0 24 24">
-                          <path d="M2.8 12s3.3-5.5 9.2-5.5S21.2 12 21.2 12 17.9 17.5 12 17.5 2.8 12 2.8 12Z" />
-                          <circle cx="12" cy="12" r="2.6" />
-                        </svg>
-                      </button>
-                    )}
-
-                    <button
-                      className="row-icon-button menu-icon-button"
-                      type="button"
-                      aria-label="More actions"
-                      title="More actions"
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <svg aria-hidden="true" viewBox="0 0 24 24">
-                        <circle cx="12" cy="5" r="1.4" />
-                        <circle cx="12" cy="12" r="1.4" />
-                        <circle cx="12" cy="19" r="1.4" />
-                      </svg>
-                    </button>
-
-                    <button
-                      className="delete-row-button"
-                      type="button"
-                      aria-label={`Delete ${interview.company} interview`}
-                      title="Delete interview"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setDeleteError(null);
-                        setDeleteTarget(interview);
-                      }}
-                    >
-                      <svg aria-hidden="true" viewBox="0 0 24 24">
-                        <path d="M4.5 7h15" />
-                        <path d="M9 7V4.8h6V7" />
-                        <path d="M7 7l.7 12h8.6L17 7" />
-                        <path d="M10 10.5v5.5M14 10.5v5.5" />
-                      </svg>
-                    </button>
-                  </span>
-                </div>
-              ))}
+                    </div>,
+                    ...companyInterviews.map((interview) =>
+                      renderInterviewRow(interview, true),
+                    ),
+                  ])
+                : visibleInterviews.map((interview) =>
+                    renderInterviewRow(interview, false),
+                  ))}
             </div>
           )}
         </section>
@@ -1632,6 +1952,165 @@ export default function App() {
         </div>
       )}
 
+      {editTarget && editForm && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-card edit-interview-modal" role="dialog" aria-modal="true">
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">INTERVIEW DETAILS</p>
+                <h2>Edit interview</h2>
+                <p>Correct metadata without reprocessing the recording.</p>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={closeEditInterview}
+              >
+                ×
+              </button>
+            </div>
+
+            <form className="upload-form" onSubmit={handleEditInterview}>
+              <div className="form-grid">
+                <label>
+                  <span>Company</span>
+                  <input
+                    required
+                    value={editForm.company}
+                    onChange={(event) =>
+                      setEditForm((current) =>
+                        current
+                          ? { ...current, company: event.target.value }
+                          : current,
+                      )
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>Interviewer / recruiter</span>
+                  <input
+                    required
+                    value={editForm.interviewer}
+                    onChange={(event) =>
+                      setEditForm((current) =>
+                        current
+                          ? { ...current, interviewer: event.target.value }
+                          : current,
+                      )
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>Date & time</span>
+                  <input
+                    required
+                    type="datetime-local"
+                    value={editForm.datetime}
+                    onChange={(event) =>
+                      setEditForm((current) =>
+                        current
+                          ? { ...current, datetime: event.target.value }
+                          : current,
+                      )
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>Round number</span>
+                  <input
+                    required
+                    min={1}
+                    type="number"
+                    value={editForm.sequence}
+                    onChange={(event) =>
+                      setEditForm((current) =>
+                        current
+                          ? {
+                              ...current,
+                              sequence: Number(event.target.value),
+                            }
+                          : current,
+                      )
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>Round type</span>
+                  <select
+                    value={editForm.roundType}
+                    onChange={(event) =>
+                      setEditForm((current) =>
+                        current
+                          ? { ...current, roundType: event.target.value }
+                          : current,
+                      )
+                    }
+                  >
+                    {ROUND_TYPES.map((roundType) => (
+                      <option key={roundType} value={roundType}>
+                        {roundType}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  <span>Role</span>
+                  <input
+                    value={editForm.role}
+                    onChange={(event) =>
+                      setEditForm((current) =>
+                        current
+                          ? { ...current, role: event.target.value }
+                          : current,
+                      )
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>Target level</span>
+                  <input
+                    value={editForm.targetLevel}
+                    onChange={(event) =>
+                      setEditForm((current) =>
+                        current
+                          ? { ...current, targetLevel: event.target.value }
+                          : current,
+                      )
+                    }
+                  />
+                </label>
+              </div>
+
+              {editError && <div className="inline-error">{editError}</div>}
+
+              <div className="modal-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={isSavingEdit}
+                  onClick={closeEditInterview}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="primary-button"
+                  type="submit"
+                  disabled={isSavingEdit}
+                >
+                  {isSavingEdit ? "Saving…" : "Save changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {isUploadOpen && (
         <div className="modal-backdrop" role="presentation">
           <div className="modal-card" role="dialog" aria-modal="true">
@@ -1685,6 +2164,24 @@ export default function App() {
                   <input min={1} required type="number" value={uploadForm.sequence} onChange={(event) =>
                     setUploadForm((current) => ({ ...current, sequence: Number(event.target.value) }))
                   } />
+                </label>
+                <label>
+                  <span>Round type</span>
+                  <select
+                    value={uploadForm.roundType}
+                    onChange={(event) =>
+                      setUploadForm((current) => ({
+                        ...current,
+                        roundType: event.target.value,
+                      }))
+                    }
+                  >
+                    {ROUND_TYPES.map((roundType) => (
+                      <option key={roundType} value={roundType}>
+                        {roundType}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label>
                   <span>Role</span>

@@ -13,7 +13,18 @@ class InterviewCreateRequest(BaseModel):
     sequence_number: int = Field(default=1, ge=1)
     role: str | None = None
     target_level: str | None = None
+    round_type: str | None = None
     source_audio_path: str = Field(min_length=1)
+
+
+class InterviewUpdateRequest(BaseModel):
+    company: str | None = Field(default=None, min_length=1)
+    recruiter_or_interviewer: str | None = Field(default=None, min_length=1)
+    interview_datetime: datetime | None = None
+    sequence_number: int | None = Field(default=None, ge=1)
+    role: str | None = None
+    target_level: str | None = None
+    round_type: str | None = None
 
 
 class InterviewResponse(BaseModel):
@@ -24,9 +35,13 @@ class InterviewResponse(BaseModel):
     sequence_number: int
     role: str | None
     target_level: str | None
+    round_type: str | None = None
     source_audio_path: str
     artifact_root_path: str | None
     duration_seconds: float | None = None
+    transcription_seconds: float | None = None
+    diarization_seconds: float | None = None
+    total_processing_seconds: float | None = None
 
 
 class JobResponse(BaseModel):

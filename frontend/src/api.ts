@@ -94,6 +94,7 @@ export async function uploadInterview(input: {
   sequenceNumber: number;
   role: string;
   targetLevel: string;
+  roundType: string;
 }): Promise<Interview> {
   const form = new FormData();
   form.append("audio", input.audio);
@@ -104,10 +105,42 @@ export async function uploadInterview(input: {
 
   if (input.role.trim()) form.append("role", input.role.trim());
   if (input.targetLevel.trim()) form.append("target_level", input.targetLevel.trim());
+  if (input.roundType.trim()) form.append("round_type", input.roundType.trim());
 
   const response = await fetch(`${API_BASE}/interviews/upload`, {
     method: "POST",
     body: form,
+  });
+
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<Interview>;
+}
+
+
+export async function updateInterview(
+  interviewId: string,
+  input: {
+    company: string;
+    recruiterOrInterviewer: string;
+    interviewDatetime: string;
+    sequenceNumber: number;
+    role: string;
+    targetLevel: string;
+    roundType: string;
+  },
+): Promise<Interview> {
+  const response = await fetch(`${API_BASE}/interviews/${interviewId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      company: input.company.trim(),
+      recruiter_or_interviewer: input.recruiterOrInterviewer.trim(),
+      interview_datetime: input.interviewDatetime,
+      sequence_number: input.sequenceNumber,
+      role: input.role.trim() || null,
+      target_level: input.targetLevel.trim() || null,
+      round_type: input.roundType.trim() || null,
+    }),
   });
 
   if (!response.ok) throw await responseError(response);

@@ -27,6 +27,7 @@ from interview_intelligence.api.dependencies import (
 from interview_intelligence.api.schemas import (
     InterviewCreateRequest,
     InterviewResponse,
+    InterviewUpdateRequest,
     JobResponse,
     ProcessInterviewResponse,
     TranscriptResponse,
@@ -52,9 +53,13 @@ def _to_interview_response(
         sequence_number=record.sequence_number,
         role=record.role,
         target_level=record.target_level,
+        round_type=record.round_type,
         source_audio_path=record.source_audio_path,
         artifact_root_path=record.artifact_root_path,
         duration_seconds=duration_seconds,
+        transcription_seconds=record.transcription_seconds,
+        diarization_seconds=record.diarization_seconds,
+        total_processing_seconds=record.total_processing_seconds,
     )
 
 
@@ -171,6 +176,7 @@ def build_router() -> APIRouter:
             sequence_number=payload.sequence_number,
             role=payload.role,
             target_level=payload.target_level,
+            round_type=payload.round_type,
             source_audio_path=str(source),
             created_at=now,
             updated_at=now,
@@ -192,6 +198,7 @@ def build_router() -> APIRouter:
         sequence_number: Annotated[int, Form()] = 1,
         role: Annotated[str | None, Form()] = None,
         target_level: Annotated[str | None, Form()] = None,
+        round_type: Annotated[str | None, Form()] = None,
     ) -> InterviewResponse:
         suffix = Path(audio.filename or "").suffix.lower()
         if suffix not in _ALLOWED_AUDIO_SUFFIXES:
@@ -217,6 +224,7 @@ def build_router() -> APIRouter:
             sequence_number=sequence_number,
             role=role.strip() if role else None,
             target_level=target_level.strip() if target_level else None,
+            round_type=round_type.strip() if round_type else None,
             source_audio_path=str(destination),
             created_at=now,
             updated_at=now,
@@ -256,6 +264,55 @@ def build_router() -> APIRouter:
         request: Request,
     ) -> InterviewResponse:
         return _to_interview_response(_require_interview(interview_id, request))
+
+    @router.patch(
+        "/interviews/{interview_id}",
+        response_model=InterviewResponse,
+    )
+    def update_interview(
+        interview_id: UUID,
+        payload: InterviewUpdateRequest,
+        request: Request,
+    ) -> InterviewResponse:
+        supplied_fields = set(payload.model_fields_set)
+
+        company = payload.company.strip() if payload.company is not None else None
+        recruiter = (
+            payload.recruiter_or_interviewer.strip()
+            if payload.recruiter_or_interviewer is not None
+            else None
+        )
+        role = payload.role.strip() if payload.role else None
+        target_level = payload.target_level.strip() if payload.target_level else None
+        round_type = payload.round_type.strip() if payload.round_type else None
+
+        updated = interviews(request).update_metadata(
+            interview_id,
+            company=company,
+            recruiter_or_interviewer=recruiter,
+            interview_datetime=payload.interview_datetime,
+            sequence_number=payload.sequence_number,
+            role=role,
+            target_level=target_level,
+            round_type=round_type,
+            supplied_fields=supplied_fields,
+        )
+        if updated is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Interview not found",
+            )
+
+        latest_job = jobs(request).latest_for_interview(interview_id)
+        duration_seconds = (
+            latest_job.total_audio_seconds
+            if latest_job is not None
+            else None
+        )
+        return _to_interview_response(
+            updated,
+            duration_seconds=duration_seconds,
+        )
 
     @router.delete(
         "/interviews/{interview_id}",

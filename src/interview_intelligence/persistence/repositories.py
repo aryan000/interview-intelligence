@@ -19,10 +19,12 @@ class InterviewRepository:
                 """
                 INSERT INTO interviews (
                     id, company, recruiter_or_interviewer, interview_datetime,
-                    sequence_number, role, target_level, source_audio_path,
-                    artifact_root_path, created_at, updated_at
+                    sequence_number, role, target_level, round_type,
+                    source_audio_path, artifact_root_path,
+                    transcription_seconds, diarization_seconds,
+                    total_processing_seconds, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     company = excluded.company,
                     recruiter_or_interviewer = excluded.recruiter_or_interviewer,
@@ -30,8 +32,12 @@ class InterviewRepository:
                     sequence_number = excluded.sequence_number,
                     role = excluded.role,
                     target_level = excluded.target_level,
+                    round_type = excluded.round_type,
                     source_audio_path = excluded.source_audio_path,
                     artifact_root_path = excluded.artifact_root_path,
+                    transcription_seconds = excluded.transcription_seconds,
+                    diarization_seconds = excluded.diarization_seconds,
+                    total_processing_seconds = excluded.total_processing_seconds,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -42,8 +48,12 @@ class InterviewRepository:
                     interview.sequence_number,
                     interview.role,
                     interview.target_level,
+                    interview.round_type,
                     interview.source_audio_path,
                     interview.artifact_root_path,
+                    interview.transcription_seconds,
+                    interview.diarization_seconds,
+                    interview.total_processing_seconds,
                     interview.created_at.isoformat(),
                     interview.updated_at.isoformat(),
                 ),
@@ -92,6 +102,76 @@ class InterviewRepository:
                 """,
                 (artifact_root_path, now.isoformat(), str(interview_id)),
             )
+
+    def set_processing_metrics(
+        self,
+        interview_id: UUID,
+        *,
+        transcription_seconds: float,
+        diarization_seconds: float,
+        total_processing_seconds: float,
+    ) -> None:
+        now = _utcnow()
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE interviews
+                SET transcription_seconds = ?,
+                    diarization_seconds = ?,
+                    total_processing_seconds = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    transcription_seconds,
+                    diarization_seconds,
+                    total_processing_seconds,
+                    now.isoformat(),
+                    str(interview_id),
+                ),
+            )
+
+    def update_metadata(
+        self,
+        interview_id: UUID,
+        *,
+        company: str | None = None,
+        recruiter_or_interviewer: str | None = None,
+        interview_datetime: datetime | None = None,
+        sequence_number: int | None = None,
+        role: str | None = None,
+        target_level: str | None = None,
+        round_type: str | None = None,
+        supplied_fields: set[str] | None = None,
+    ) -> InterviewRecord | None:
+        record = self.get(interview_id)
+        if record is None:
+            return None
+
+        supplied = supplied_fields or set()
+        updates: dict[str, object] = {"updated_at": _utcnow()}
+
+        if "company" in supplied and company is not None:
+            updates["company"] = company
+        if (
+            "recruiter_or_interviewer" in supplied
+            and recruiter_or_interviewer is not None
+        ):
+            updates["recruiter_or_interviewer"] = recruiter_or_interviewer
+        if "interview_datetime" in supplied and interview_datetime is not None:
+            updates["interview_datetime"] = interview_datetime
+        if "sequence_number" in supplied and sequence_number is not None:
+            updates["sequence_number"] = sequence_number
+        if "role" in supplied:
+            updates["role"] = role
+        if "target_level" in supplied:
+            updates["target_level"] = target_level
+        if "round_type" in supplied:
+            updates["round_type"] = round_type
+
+        updated = record.model_copy(update=updates)
+        self.save(updated)
+        return updated
 
 
 class ProcessingJobRepository:
