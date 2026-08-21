@@ -1,16 +1,27 @@
+import multiprocessing as mp
 import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from multiprocessing.connection import Connection
 from pathlib import Path
+from threading import Event
 
 from interview_intelligence.domain.models import TranscriptSegment
-from interview_intelligence.engines.base import TranscriptionEngine, TranscriptionRequest
+from interview_intelligence.engines.base import (
+    TranscriptionEngine,
+    TranscriptionRequest,
+    TranscriptionResult,
+)
 from interview_intelligence.transcription.checkpoint import (
     CheckpointStore,
     ChunkCheckpoint,
 )
 from interview_intelligence.transcription.chunking import AudioChunk, FixedWindowChunker
+
+
+class TranscriptionCancelled(RuntimeError):
+    """Raised when the active transcription process is terminated by the user."""
 
 
 @dataclass(frozen=True)
@@ -49,18 +60,48 @@ class ChunkedTranscriptionResult:
 ProgressListener = Callable[[ChunkProgress], None]
 
 
+def _transcribe_in_child(
+    connection: Connection,
+    engine: TranscriptionEngine,
+    request: TranscriptionRequest,
+) -> None:
+    """Child-process entry point for one ML transcription chunk."""
+    try:
+        result = engine.transcribe(request)
+        connection.send(("ok", result))
+    except BaseException as exc:
+        # Do not require arbitrary exception objects to be pickleable.
+        connection.send(
+            (
+                "error",
+                f"{type(exc).__name__}: {exc}",
+            )
+        )
+    finally:
+        connection.close()
+
+
 class ChunkedTranscriptionRunner:
-    """Transcribe long recordings in restart-safe sequential chunks."""
+    """Transcribe long recordings in restart-safe, interruptible chunks.
+
+    When ``process_isolation`` is enabled, each ML transcription call runs in a
+    separate spawned process. The parent monitors the cancellation Event and can
+    terminate the active child immediately without killing FastAPI itself.
+    """
 
     def __init__(
         self,
         engine: TranscriptionEngine,
         chunker: FixedWindowChunker | None = None,
         ffmpeg_executable: str = "ffmpeg",
+        process_isolation: bool = False,
+        cancellation_poll_seconds: float = 0.1,
     ) -> None:
         self.engine = engine
         self.chunker = chunker or FixedWindowChunker()
         self.ffmpeg_executable = ffmpeg_executable
+        self.process_isolation = process_isolation
+        self.cancellation_poll_seconds = cancellation_poll_seconds
 
     def run(
         self,
@@ -71,6 +112,7 @@ class ChunkedTranscriptionRunner:
         language: str | None = None,
         word_timestamps: bool = False,
         progress_listener: ProgressListener | None = None,
+        cancel_event: Event | None = None,
     ) -> ChunkedTranscriptionResult:
         work_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_store = CheckpointStore(work_dir / "checkpoints")
@@ -84,6 +126,8 @@ class ChunkedTranscriptionRunner:
         started = time.perf_counter()
 
         for chunk in chunks:
+            self._raise_if_cancelled(cancel_event)
+
             checkpoint = checkpoint_store.load(chunk.index)
             resumed = checkpoint is not None
 
@@ -95,7 +139,10 @@ class ChunkedTranscriptionRunner:
                     initial_prompt=initial_prompt,
                     language=language,
                     word_timestamps=word_timestamps,
+                    cancel_event=cancel_event,
                 )
+                # Only completed chunks are checkpointed. A terminated chunk is
+                # discarded and will restart from the same chunk on resume.
                 checkpoint_store.save(checkpoint)
 
             if detected_language is None:
@@ -151,6 +198,7 @@ class ChunkedTranscriptionRunner:
         initial_prompt: str | None,
         language: str | None,
         word_timestamps: bool,
+        cancel_event: Event | None,
     ) -> ChunkCheckpoint:
         chunk_path = work_dir / f"chunk_{chunk.index:03d}.wav"
 
@@ -162,13 +210,15 @@ class ChunkedTranscriptionRunner:
         )
 
         try:
-            result = self.engine.transcribe(
-                TranscriptionRequest(
-                    audio_path=chunk_path,
-                    language=language,
-                    initial_prompt=initial_prompt,
-                    word_timestamps=word_timestamps,
-                )
+            request = TranscriptionRequest(
+                audio_path=chunk_path,
+                language=language,
+                initial_prompt=initial_prompt,
+                word_timestamps=word_timestamps,
+            )
+            result = self._run_engine(
+                request,
+                cancel_event=cancel_event,
             )
         finally:
             chunk_path.unlink(missing_ok=True)
@@ -210,6 +260,83 @@ class ChunkedTranscriptionRunner:
             engine_name=result.engine_name,
             model_name=result.model_name,
         )
+
+    def _run_engine(
+        self,
+        request: TranscriptionRequest,
+        cancel_event: Event | None,
+    ) -> TranscriptionResult:
+        self._raise_if_cancelled(cancel_event)
+
+        if not self.process_isolation:
+            return self.engine.transcribe(request)
+
+        context = mp.get_context("spawn")
+        parent_connection, child_connection = context.Pipe(duplex=False)
+        process = context.Process(
+            target=_transcribe_in_child,
+            args=(
+                child_connection,
+                self.engine,
+                request,
+            ),
+            daemon=False,
+        )
+
+        process.start()
+        child_connection.close()
+
+        try:
+            while process.is_alive():
+                if cancel_event is not None and cancel_event.is_set():
+                    process.terminate()
+                    process.join(timeout=2)
+
+                    if process.is_alive():
+                        process.kill()
+                        process.join(timeout=2)
+
+                    raise TranscriptionCancelled(
+                        "Transcription stopped by user"
+                    )
+
+                process.join(timeout=self.cancellation_poll_seconds)
+
+            if process.exitcode != 0:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise TranscriptionCancelled(
+                        "Transcription stopped by user"
+                    )
+                raise RuntimeError(
+                    "Transcription worker exited unexpectedly "
+                    f"with code {process.exitcode}"
+                )
+
+            if not parent_connection.poll(1):
+                raise RuntimeError(
+                    "Transcription worker exited without returning a result"
+                )
+
+            status, payload = parent_connection.recv()
+            if status == "error":
+                raise RuntimeError(str(payload))
+
+            if not isinstance(payload, TranscriptionResult):
+                raise RuntimeError(
+                    "Transcription worker returned an invalid result"
+                )
+
+            return payload
+        finally:
+            parent_connection.close()
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=2)
+
+    @staticmethod
+    def _raise_if_cancelled(cancel_event: Event | None) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise TranscriptionCancelled("Transcription stopped by user")
 
     def _extract_chunk(
         self,

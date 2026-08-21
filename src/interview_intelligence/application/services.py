@@ -24,6 +24,7 @@ def build_local_processing_pipeline(
             chunk_seconds=600,
             overlap_seconds=10,
         ),
+        process_isolation=True,
     )
 
     return InterviewProcessingPipeline(

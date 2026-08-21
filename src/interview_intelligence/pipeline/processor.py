@@ -1,6 +1,7 @@
 import time
 from collections import defaultdict
 from collections.abc import Callable
+from threading import Event
 
 from interview_intelligence.audio.inspector import AudioInspector
 from interview_intelligence.audio.preparer import AudioPreparer
@@ -64,6 +65,7 @@ class InterviewProcessingPipeline:
         self,
         request: InterviewProcessingRequest,
         progress_callback: PipelineProgressCallback | None = None,
+        cancel_event: Event | None = None,
     ) -> InterviewProcessingResult:
         total_started = time.perf_counter()
 
@@ -112,6 +114,7 @@ class InterviewProcessingPipeline:
                     progress_callback,
                     progress,
                 ),
+                cancel_event=cancel_event,
             )
             transcription = TranscriptionResult(
                 language=chunked.language,

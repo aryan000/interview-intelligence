@@ -1,3 +1,4 @@
+import inspect
 from pathlib import Path
 from threading import Event
 from uuid import UUID
@@ -11,6 +12,7 @@ from interview_intelligence.pipeline.models import (
     InterviewProcessingResult,
 )
 from interview_intelligence.pipeline.processor import InterviewProcessingPipeline
+from interview_intelligence.transcription.runner import TranscriptionCancelled
 
 
 class ProcessingCancelled(RuntimeError):
@@ -81,10 +83,23 @@ class ExistingInterviewProcessingCoordinator:
                     message=message,
                 )
 
-            result = self.pipeline.process(
-                request,
-                progress_callback=report_progress,
-            )
+            process_parameters = inspect.signature(
+                self.pipeline.process
+            ).parameters
+
+            if "cancel_event" in process_parameters:
+                result = self.pipeline.process(
+                    request,
+                    progress_callback=report_progress,
+                    cancel_event=self.cancel_event,
+                )
+            else:
+                # Backward compatibility for tests or alternate pipelines that
+                # implement the older process(request, progress_callback) contract.
+                result = self.pipeline.process(
+                    request,
+                    progress_callback=report_progress,
+                )
 
             self._raise_if_cancelled()
 
@@ -95,7 +110,7 @@ class ExistingInterviewProcessingCoordinator:
             self.job_service.complete(job_id)
             return result
 
-        except ProcessingCancelled:
+        except (ProcessingCancelled, TranscriptionCancelled):
             self.job_service.cancel(
                 job_id,
                 "Processing stopped by user",
