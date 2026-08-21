@@ -7,6 +7,7 @@ import {
   getAudioUrl,
   getInterviewReview,
   getLatestInterviewJob,
+  getReviewConfig,
   getTranscript,
   getTranscriptDownloadUrl,
   listInterviews,
@@ -15,7 +16,7 @@ import {
   updateInterview,
   uploadInterview,
 } from "./api";
-import type { Interview, InterviewReview, JobEvent, TranscriptLine } from "./types";
+import type { Interview, InterviewReview, JobEvent, ReviewConfig, TranscriptLine } from "./types";
 
 type UploadFormState = {
   company: string;
@@ -132,6 +133,16 @@ function formatElapsed(totalSeconds: number): string {
   }
 
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatTokenCount(value: number): string {
+  return new Intl.NumberFormat("en-IN").format(value);
+}
+
+function formatUsd(value: number | null): string {
+  if (value === null) return "Unavailable";
+  if (value < 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(2)}`;
 }
 
 function formatClockTime(value: Date): string {
@@ -295,6 +306,9 @@ export default function App() {
   const [review, setReview] = useState<InterviewReview | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewConfig, setReviewConfig] = useState<ReviewConfig | null>(null);
+  const [analysisStartedAt, setAnalysisStartedAt] = useState<Date | null>(null);
+  const [analysisElapsedSeconds, setAnalysisElapsedSeconds] = useState(0);
   const [showAllStrengths, setShowAllStrengths] = useState(false);
   const [showAllGaps, setShowAllGaps] = useState(false);
   const [showAllImprovements, setShowAllImprovements] = useState(false);
@@ -422,6 +436,36 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [processingStartedAt, jobEvent?.status]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    void getReviewConfig()
+      .then((config) => {
+        if (!cancelled) setReviewConfig(config);
+      })
+      .catch(() => {
+        // Review can still work with a custom provider even if config discovery fails.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isAnalyzing || !analysisStartedAt) return;
+
+    const update = () => {
+      setAnalysisElapsedSeconds(
+        Math.max(0, (Date.now() - analysisStartedAt.getTime()) / 1000),
+      );
+    };
+
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [analysisStartedAt, isAnalyzing]);
+
   const readyCount = useMemo(
     () => interviews.filter((item) => item.artifact_root_path).length,
     [interviews],
@@ -547,6 +591,8 @@ export default function App() {
     setTranscriptTab("transcript");
     setReview(null);
     setReviewError(null);
+    setAnalysisStartedAt(null);
+    setAnalysisElapsedSeconds(0);
     setShowAllStrengths(false);
     setShowAllGaps(false);
     setShowAllImprovements(false);
@@ -570,6 +616,9 @@ export default function App() {
   const handleAnalyzeInterview = async () => {
     if (!activeInterview) return;
 
+    const startedAt = new Date();
+    setAnalysisStartedAt(startedAt);
+    setAnalysisElapsedSeconds(0);
     setIsAnalyzing(true);
     setReviewError(null);
 
@@ -577,6 +626,10 @@ export default function App() {
       const result = await analyzeInterview(activeInterview.id);
       setReview(result);
       setTranscriptTab("review");
+      setAnalysisElapsedSeconds(
+        result.analysis?.elapsed_seconds ??
+          Math.max(0, (Date.now() - startedAt.getTime()) / 1000),
+      );
     } catch (caught: unknown) {
       setReviewError(
         caught instanceof Error ? caught.message : "Unable to analyze interview.",
@@ -996,24 +1049,84 @@ export default function App() {
               ) : (
                 <div className="review-view">
                   {!review ? (
-                    <div className="review-empty">
-                      <div className="review-empty-icon">✦</div>
-                      <p className="eyebrow">AI INTERVIEW REVIEW</p>
-                      <h2>Turn this transcript into feedback</h2>
-                      <p>
-                        Analyze questions, answer quality, strengths, gaps, level signal,
-                        and the overall hiring signal.
-                      </p>
-                      {reviewError && <div className="inline-error">{reviewError}</div>}
-                      <button
-                        className="primary-button analyze-button"
-                        type="button"
-                        disabled={isAnalyzing}
-                        onClick={() => void handleAnalyzeInterview()}
-                      >
-                        {isAnalyzing ? "Analyzing interview…" : "✦ Analyze interview"}
-                      </button>
-                    </div>
+                    isAnalyzing ? (
+                      <div className="review-analysis-progress">
+                        <div className="analysis-spinner" aria-hidden="true" />
+                        <p className="eyebrow">AI INTERVIEW REVIEW</p>
+                        <h2>Analyzing your interview</h2>
+                        <p className="analysis-progress-copy">
+                          The transcript has been sent for structured review. Keep this
+                          page open while the model evaluates questions, evidence,
+                          strengths, gaps and level signal.
+                        </p>
+
+                        <div className="analysis-live-grid">
+                          <div>
+                            <span>Elapsed</span>
+                            <strong>{formatElapsed(analysisElapsedSeconds)}</strong>
+                          </div>
+                          <div>
+                            <span>Provider</span>
+                            <strong>{reviewConfig?.provider ?? "OpenAI"}</strong>
+                          </div>
+                          <div>
+                            <span>Model</span>
+                            <strong>{reviewConfig?.model ?? "Configured model"}</strong>
+                          </div>
+                          <div>
+                            <span>Usage</span>
+                            <strong>Available on completion</strong>
+                          </div>
+                        </div>
+
+                        {reviewConfig?.input_per_million_usd !== null &&
+                          reviewConfig?.input_per_million_usd !== undefined && (
+                            <div className="analysis-rate-note">
+                              <strong>Current standard rates</strong>
+                              <span>
+                                Input ${reviewConfig.input_per_million_usd}/1M · Output $
+                                {reviewConfig.output_per_million_usd}/1M tokens
+                              </span>
+                            </div>
+                          )}
+
+                        <p className="analysis-usage-note">
+                          Exact token counts are reported by the provider only when the
+                          response completes. The final review will show actual usage and
+                          an estimated API cost.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="review-empty">
+                        <div className="review-empty-icon">✦</div>
+                        <p className="eyebrow">AI INTERVIEW REVIEW</p>
+                        <h2>Turn this transcript into feedback</h2>
+                        <p>
+                          Analyze questions, answer quality, strengths, gaps, level signal,
+                          and the overall hiring signal.
+                        </p>
+                        {reviewConfig && (
+                          <div className="review-preflight">
+                            <span>{reviewConfig.provider}</span>
+                            <strong>{reviewConfig.model}</strong>
+                            {reviewConfig.input_per_million_usd !== null && (
+                              <small>
+                                ${reviewConfig.input_per_million_usd}/1M input · $
+                                {reviewConfig.output_per_million_usd}/1M output
+                              </small>
+                            )}
+                          </div>
+                        )}
+                        {reviewError && <div className="inline-error">{reviewError}</div>}
+                        <button
+                          className="primary-button analyze-button"
+                          type="button"
+                          onClick={() => void handleAnalyzeInterview()}
+                        >
+                          ✦ Analyze interview
+                        </button>
+                      </div>
+                    )
                   ) : (
                     <>
                       {(() => {
@@ -1045,6 +1158,19 @@ export default function App() {
 
                         return (
                           <>
+                            {isAnalyzing && (
+                              <section className="review-rerun-banner">
+                                <div className="analysis-spinner analysis-spinner-small" />
+                                <div>
+                                  <strong>Refreshing AI review</strong>
+                                  <span>
+                                    {formatElapsed(analysisElapsedSeconds)} elapsed ·{" "}
+                                    {reviewConfig?.model ?? review.model}
+                                  </span>
+                                </div>
+                              </section>
+                            )}
+
                             <section className={`review-verdict signal-border-${review.hiring_signal}`}>
                               <div className="verdict-copy">
                                 <p className="eyebrow">AI INTERVIEW REVIEW</p>
@@ -1093,6 +1219,86 @@ export default function App() {
                                 </div>
                               </div>
                             </section>
+
+                            {(review.usage || review.analysis) && (
+                              <section className="review-usage-card">
+                                <div className="review-usage-heading">
+                                  <div>
+                                    <p className="eyebrow">ANALYSIS USAGE</p>
+                                    <h3>Time, tokens and estimated API cost</h3>
+                                  </div>
+                                  <div className="usage-cost">
+                                    <span>Estimated cost</span>
+                                    <strong>
+                                      {formatUsd(
+                                        review.usage?.estimated_cost_usd ?? null,
+                                      )}
+                                    </strong>
+                                  </div>
+                                </div>
+
+                                <div className="review-usage-grid">
+                                  <div>
+                                    <span>Elapsed</span>
+                                    <strong>
+                                      {review.analysis
+                                        ? formatElapsed(
+                                            review.analysis.elapsed_seconds,
+                                          )
+                                        : "—"}
+                                    </strong>
+                                  </div>
+                                  <div>
+                                    <span>Input tokens</span>
+                                    <strong>
+                                      {formatTokenCount(
+                                        review.usage?.input_tokens ?? 0,
+                                      )}
+                                    </strong>
+                                  </div>
+                                  <div>
+                                    <span>Cached input</span>
+                                    <strong>
+                                      {formatTokenCount(
+                                        review.usage?.cached_input_tokens ?? 0,
+                                      )}
+                                    </strong>
+                                  </div>
+                                  <div>
+                                    <span>Output tokens</span>
+                                    <strong>
+                                      {formatTokenCount(
+                                        review.usage?.output_tokens ?? 0,
+                                      )}
+                                    </strong>
+                                  </div>
+                                  <div>
+                                    <span>Reasoning tokens</span>
+                                    <strong>
+                                      {formatTokenCount(
+                                        review.usage?.reasoning_tokens ?? 0,
+                                      )}
+                                    </strong>
+                                  </div>
+                                  <div>
+                                    <span>Total tokens</span>
+                                    <strong>
+                                      {formatTokenCount(
+                                        review.usage?.total_tokens ?? 0,
+                                      )}
+                                    </strong>
+                                  </div>
+                                </div>
+
+                                <div className="usage-footnote">
+                                  <span>{review.provider} · {review.model}</span>
+                                  <span>
+                                    {review.usage?.pricing_basis ??
+                                      "Token usage is provider-reported; cost unavailable for this model."}
+                                  </span>
+                                </div>
+                              </section>
+                            )}
 
                             <section className="review-takeaways-grid">
                               <article className="takeaway-card takeaway-positive">

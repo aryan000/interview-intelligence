@@ -3,6 +3,7 @@ import type {
   InterviewReview,
   JobEvent,
   ProcessInterviewResponse,
+  ReviewConfig,
   TranscriptResponse,
 } from "./types";
 
@@ -29,6 +30,13 @@ export async function getTranscript(interviewId: string): Promise<TranscriptResp
   const response = await fetch(`${API_BASE}/interviews/${interviewId}/transcript`);
   if (!response.ok) throw await responseError(response);
   return response.json() as Promise<TranscriptResponse>;
+}
+
+
+export async function getReviewConfig(): Promise<ReviewConfig> {
+  const response = await fetch(`${API_BASE}/review/config`);
+  if (!response.ok) throw await responseError(response);
+  return response.json() as Promise<ReviewConfig>;
 }
 
 export async function getInterviewReview(

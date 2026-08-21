@@ -1,8 +1,14 @@
 import json
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from interview_intelligence.review.engines.base import InterviewReviewEngine
-from interview_intelligence.review.models import InterviewReview, ReviewRequest
+from interview_intelligence.review.models import (
+    InterviewReview,
+    ReviewAnalysisMetadata,
+    ReviewRequest,
+)
 
 
 class InterviewReviewService:
@@ -24,7 +30,20 @@ class InterviewReviewService:
         if not transcript.strip():
             raise ValueError("Transcript is empty")
 
+        started_at = datetime.now(UTC)
+        started = time.perf_counter()
         review = self.engine.review(request, transcript)
+        completed_at = datetime.now(UTC)
+
+        review = review.model_copy(
+            update={
+                "analysis": ReviewAnalysisMetadata(
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    elapsed_seconds=time.perf_counter() - started,
+                )
+            }
+        )
 
         resolved_output = output_path.expanduser().resolve()
         resolved_output.parent.mkdir(parents=True, exist_ok=True)

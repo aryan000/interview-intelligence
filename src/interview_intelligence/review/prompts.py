@@ -4,6 +4,7 @@ from interview_intelligence.review.models import ReviewRequest
 def build_review_prompt(request: ReviewRequest, transcript: str) -> str:
     role = request.role or "unspecified role"
     target_level = request.target_level or "unspecified level"
+    round_type = request.round_type or "unspecified round"
 
     return f"""
 You are an expert interviewer and hiring debrief reviewer.
@@ -12,6 +13,7 @@ Review the interview transcript for:
 - Company: {request.company}
 - Role: {role}
 - Target level: {target_level}
+- Interview round: {round_type}
 
 Important rules:
 1. Judge only from evidence in the transcript. Do not invent missing context.

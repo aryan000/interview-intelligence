@@ -72,6 +72,33 @@ export type QuestionReview = {
   level_signal: string | null;
 };
 
+export type ReviewUsage = {
+  input_tokens: number;
+  cached_input_tokens: number;
+  cache_write_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd: number | null;
+  pricing_basis: string | null;
+};
+
+export type ReviewAnalysisMetadata = {
+  started_at: string;
+  completed_at: string;
+  elapsed_seconds: number;
+};
+
+export type ReviewConfig = {
+  provider: string;
+  model: string;
+  pricing_basis: string | null;
+  input_per_million_usd: number | null;
+  cached_input_per_million_usd: number | null;
+  cache_write_per_million_usd: number | null;
+  output_per_million_usd: number | null;
+};
+
 export type InterviewReview = {
   interview_id: string;
   provider: string;
@@ -85,4 +112,6 @@ export type InterviewReview = {
   questions: QuestionReview[];
   role_signal: string | null;
   level_signal: string | null;
+  usage: ReviewUsage | null;
+  analysis: ReviewAnalysisMetadata | null;
 };

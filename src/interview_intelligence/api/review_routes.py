@@ -5,16 +5,39 @@ from typing import cast
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, status
+from pydantic import BaseModel
 
 from interview_intelligence.persistence.repositories import InterviewRepository
 from interview_intelligence.review.engines.base import InterviewReviewEngine
 from interview_intelligence.review.engines.openai_engine import OpenAIReviewEngine
 from interview_intelligence.review.models import InterviewReview, ReviewRequest
+from interview_intelligence.review.pricing import MODEL_RATES, PRICING_BASIS
 from interview_intelligence.review.service import InterviewReviewService
+
+
+class ReviewConfigResponse(BaseModel):
+    provider: str
+    model: str
+    pricing_basis: str | None = None
+    input_per_million_usd: float | None = None
+    cached_input_per_million_usd: float | None = None
+    cache_write_per_million_usd: float | None = None
+    output_per_million_usd: float | None = None
 
 
 def _interviews(request: Request) -> InterviewRepository:
     return cast(InterviewRepository, request.app.state.interviews)
+
+
+def _configured_model(request: Request) -> str:
+    configured = getattr(request.app.state, "review_engine", None)
+    if configured is not None:
+        return str(getattr(configured, "model", "configured-provider"))
+
+    return os.getenv(
+        "INTERVIEW_INTELLIGENCE_REVIEW_MODEL",
+        "gpt-5.6-sol",
+    )
 
 
 def _review_engine(request: Request) -> InterviewReviewEngine:
@@ -29,15 +52,34 @@ def _review_engine(request: Request) -> InterviewReviewEngine:
             detail="OPENAI_API_KEY is not configured",
         )
 
-    model = os.getenv(
-        "INTERVIEW_INTELLIGENCE_REVIEW_MODEL",
-        "gpt-5.6-sol",
-    )
-    return OpenAIReviewEngine(model=model)
+    return OpenAIReviewEngine(model=_configured_model(request))
 
 
 def build_review_router() -> APIRouter:
     router = APIRouter(prefix="/api/v1")
+
+    @router.get("/review/config", response_model=ReviewConfigResponse)
+    def get_review_config(request: Request) -> ReviewConfigResponse:
+        model = _configured_model(request)
+        rates = MODEL_RATES.get(model)
+
+        return ReviewConfigResponse(
+            provider="openai",
+            model=model,
+            pricing_basis=PRICING_BASIS if rates is not None else None,
+            input_per_million_usd=(
+                rates.input_per_million if rates is not None else None
+            ),
+            cached_input_per_million_usd=(
+                rates.cached_input_per_million if rates is not None else None
+            ),
+            cache_write_per_million_usd=(
+                rates.cache_write_per_million if rates is not None else None
+            ),
+            output_per_million_usd=(
+                rates.output_per_million if rates is not None else None
+            ),
+        )
 
     @router.post(
         "/interviews/{interview_id}/review",
@@ -69,6 +111,7 @@ def build_review_router() -> APIRouter:
             company=interview.company,
             role=interview.role,
             target_level=interview.target_level,
+            round_type=interview.round_type,
             transcript_path=transcript_path,
         )
 

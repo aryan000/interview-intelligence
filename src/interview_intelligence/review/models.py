@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -18,6 +19,7 @@ class ReviewRequest(BaseModel):
     company: str
     role: str | None = None
     target_level: str | None = None
+    round_type: str | None = None
     transcript_path: Path
 
 
@@ -31,6 +33,23 @@ class QuestionReview(BaseModel):
     stronger_answer: str | None = None
     rating: float | None = Field(default=None, ge=1, le=5)
     level_signal: str | None = None
+
+
+class ReviewUsage(BaseModel):
+    input_tokens: int = Field(default=0, ge=0)
+    cached_input_tokens: int = Field(default=0, ge=0)
+    cache_write_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    reasoning_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+    estimated_cost_usd: float | None = Field(default=None, ge=0)
+    pricing_basis: str | None = None
+
+
+class ReviewAnalysisMetadata(BaseModel):
+    started_at: datetime
+    completed_at: datetime
+    elapsed_seconds: float = Field(ge=0)
 
 
 class InterviewReview(BaseModel):
@@ -49,3 +68,6 @@ class InterviewReview(BaseModel):
 
     role_signal: str | None = None
     level_signal: str | None = None
+
+    usage: ReviewUsage | None = None
+    analysis: ReviewAnalysisMetadata | None = None
