@@ -25,6 +25,17 @@ class ReviewConfigResponse(BaseModel):
     output_per_million_usd: float | None = None
 
 
+class ReviewCreateRequest(BaseModel):
+    model: str | None = None
+
+
+_ALLOWED_REVIEW_MODELS = {
+    "gpt-5.6-luna",
+    "gpt-5.6-sol",
+}
+_DEFAULT_REVIEW_MODEL = "gpt-5.6-luna"
+
+
 def _interviews(request: Request) -> InterviewRepository:
     return cast(InterviewRepository, request.app.state.interviews)
 
@@ -36,11 +47,14 @@ def _configured_model(request: Request) -> str:
 
     return os.getenv(
         "INTERVIEW_INTELLIGENCE_REVIEW_MODEL",
-        "gpt-5.6-sol",
+        _DEFAULT_REVIEW_MODEL,
     )
 
 
-def _review_engine(request: Request) -> InterviewReviewEngine:
+def _review_engine(
+    request: Request,
+    model_override: str | None = None,
+) -> InterviewReviewEngine:
     configured = getattr(request.app.state, "review_engine", None)
     if configured is not None:
         return cast(InterviewReviewEngine, configured)
@@ -52,7 +66,14 @@ def _review_engine(request: Request) -> InterviewReviewEngine:
             detail="OPENAI_API_KEY is not configured",
         )
 
-    return OpenAIReviewEngine(model=_configured_model(request))
+    model = model_override or _configured_model(request)
+    if model not in _ALLOWED_REVIEW_MODELS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unsupported review model. Choose gpt-5.6-luna or gpt-5.6-sol.",
+        )
+
+    return OpenAIReviewEngine(model=model)
 
 
 def build_review_router() -> APIRouter:
@@ -88,6 +109,7 @@ def build_review_router() -> APIRouter:
     def create_review(
         interview_id: UUID,
         request: Request,
+        payload: ReviewCreateRequest | None = None,
     ) -> InterviewReview:
         interview = _interviews(request).get(interview_id)
         if interview is None:
@@ -116,7 +138,10 @@ def build_review_router() -> APIRouter:
         )
 
         try:
-            return InterviewReviewService(_review_engine(request)).run(
+            selected_model = payload.model if payload is not None else None
+            return InterviewReviewService(
+                _review_engine(request, selected_model)
+            ).run(
                 review_request,
                 review_path,
             )

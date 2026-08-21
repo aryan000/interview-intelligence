@@ -16,6 +16,9 @@ dependencies = [
     "uvicorn[standard]>=0.52.4",
 ]
 
+[project.scripts]
+interview-review-benchmark = "interview_intelligence.review.benchmark:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0,<9.0",

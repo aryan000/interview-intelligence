@@ -3252,3 +3252,125 @@ select {
     align-items: flex-start;
   }
 }
+
+
+/* AI Review tier selection */
+
+.review-tier-picker {
+  width: min(720px, 100%);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 18px auto 10px;
+  text-align: left;
+}
+
+.review-tier-option {
+  min-height: 138px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid #dfe6e3;
+  border-radius: 13px;
+  color: #46545c;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+.review-tier-option:hover {
+  border-color: #b9d8cb;
+  background: #fbfdfc;
+}
+
+.review-tier-option-selected {
+  border-color: #6ab694;
+  box-shadow: 0 0 0 3px rgba(106, 182, 148, 0.1);
+  background: #f8fcfa;
+}
+
+.review-tier-option-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.review-tier-option-top > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.review-tier-option strong {
+  color: #26353d;
+  font-size: 13px;
+}
+
+.review-tier-option p {
+  margin: 0;
+  color: #617079;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.review-tier-option small {
+  margin-top: auto;
+  color: #8a969c;
+  font-size: 8px;
+}
+
+.review-tier-badge {
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: #2c765a;
+  background: #e6f5ee;
+  font-size: 7px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.review-tier-radio {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  position: relative;
+  border: 1.5px solid #c7d0cc;
+  border-radius: 50%;
+}
+
+.review-tier-option-selected .review-tier-radio {
+  border-color: #4ca67f;
+}
+
+.review-tier-option-selected .review-tier-radio::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  border-radius: 50%;
+  background: #4ca67f;
+}
+
+.review-tier-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+  color: #89949a;
+  font-size: 8px;
+}
+
+.review-tier-summary strong {
+  color: #4b6258;
+  font-size: 9px;
+}
+
+@media (max-width: 720px) {
+  .review-tier-picker {
+    grid-template-columns: 1fr;
+  }
+}

@@ -41,6 +41,7 @@ type EditFormState = {
 
 type SortField = "company" | "round" | "date";
 type SortDirection = "asc" | "desc";
+type ReviewTier = "standard" | "deep";
 
 type Screen = "workspace" | "transcript";
 type TranscriptTab = "transcript" | "review";
@@ -309,6 +310,7 @@ export default function App() {
   const [reviewConfig, setReviewConfig] = useState<ReviewConfig | null>(null);
   const [analysisStartedAt, setAnalysisStartedAt] = useState<Date | null>(null);
   const [analysisElapsedSeconds, setAnalysisElapsedSeconds] = useState(0);
+  const [reviewTier, setReviewTier] = useState<ReviewTier>("standard");
   const [showAllStrengths, setShowAllStrengths] = useState(false);
   const [showAllGaps, setShowAllGaps] = useState(false);
   const [showAllImprovements, setShowAllImprovements] = useState(false);
@@ -593,6 +595,7 @@ export default function App() {
     setReviewError(null);
     setAnalysisStartedAt(null);
     setAnalysisElapsedSeconds(0);
+    setReviewTier("standard");
     setShowAllStrengths(false);
     setShowAllGaps(false);
     setShowAllImprovements(false);
@@ -623,7 +626,9 @@ export default function App() {
     setReviewError(null);
 
     try {
-      const result = await analyzeInterview(activeInterview.id);
+      const selectedModel =
+        reviewTier === "deep" ? "gpt-5.6-sol" : "gpt-5.6-luna";
+      const result = await analyzeInterview(activeInterview.id, selectedModel);
       setReview(result);
       setTranscriptTab("review");
       setAnalysisElapsedSeconds(
@@ -1071,7 +1076,11 @@ export default function App() {
                           </div>
                           <div>
                             <span>Model</span>
-                            <strong>{reviewConfig?.model ?? "Configured model"}</strong>
+                            <strong>
+                              {reviewTier === "deep"
+                                ? "gpt-5.6-sol"
+                                : "gpt-5.6-luna"}
+                            </strong>
                           </div>
                           <div>
                             <span>Usage</span>
@@ -1105,18 +1114,64 @@ export default function App() {
                           Analyze questions, answer quality, strengths, gaps, level signal,
                           and the overall hiring signal.
                         </p>
-                        {reviewConfig && (
-                          <div className="review-preflight">
-                            <span>{reviewConfig.provider}</span>
-                            <strong>{reviewConfig.model}</strong>
-                            {reviewConfig.input_per_million_usd !== null && (
-                              <small>
-                                ${reviewConfig.input_per_million_usd}/1M input · $
-                                {reviewConfig.output_per_million_usd}/1M output
-                              </small>
-                            )}
-                          </div>
-                        )}
+                        <div
+                          className="review-tier-picker"
+                          role="radiogroup"
+                          aria-label="AI review depth"
+                        >
+                          <button
+                            className={`review-tier-option ${
+                              reviewTier === "standard"
+                                ? "review-tier-option-selected"
+                                : ""
+                            }`}
+                            type="button"
+                            role="radio"
+                            aria-checked={reviewTier === "standard"}
+                            onClick={() => setReviewTier("standard")}
+                          >
+                            <div className="review-tier-option-top">
+                              <div>
+                                <strong>Standard</strong>
+                                <span className="review-tier-badge">Recommended</span>
+                              </div>
+                              <span className="review-tier-radio" />
+                            </div>
+                            <p>Fast, comprehensive interview feedback.</p>
+                            <small>GPT-5.6 Luna · typically ~1 minute · lower cost</small>
+                          </button>
+
+                          <button
+                            className={`review-tier-option ${
+                              reviewTier === "deep"
+                                ? "review-tier-option-selected"
+                                : ""
+                            }`}
+                            type="button"
+                            role="radio"
+                            aria-checked={reviewTier === "deep"}
+                            onClick={() => setReviewTier("deep")}
+                          >
+                            <div className="review-tier-option-top">
+                              <div>
+                                <strong>Deep</strong>
+                              </div>
+                              <span className="review-tier-radio" />
+                            </div>
+                            <p>Maximum detail and question-level granularity.</p>
+                            <small>GPT-5.6 Sol · typically 1–3 minutes · higher cost</small>
+                          </button>
+                        </div>
+
+                        <div className="review-tier-summary">
+                          <span>Selected</span>
+                          <strong>
+                            {reviewTier === "deep"
+                              ? "Deep · GPT-5.6 Sol"
+                              : "Standard · GPT-5.6 Luna"}
+                          </strong>
+                        </div>
+
                         {reviewError && <div className="inline-error">{reviewError}</div>}
                         <button
                           className="primary-button analyze-button"

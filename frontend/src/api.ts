@@ -52,9 +52,12 @@ export async function getInterviewReview(
 
 export async function analyzeInterview(
   interviewId: string,
+  model: "gpt-5.6-luna" | "gpt-5.6-sol",
 ): Promise<InterviewReview> {
   const response = await fetch(`${API_BASE}/interviews/${interviewId}/review`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model }),
   });
 
   if (!response.ok) throw await responseError(response);
