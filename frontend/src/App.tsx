@@ -305,6 +305,7 @@ export default function App() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [roundFilter, setRoundFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [groupByCompany, setGroupByCompany] = useState(
@@ -451,7 +452,30 @@ export default function App() {
         roundFilter === "all" ||
         (interview.round_type ?? "Other") === roundFilter;
 
-      return matchesSearch && matchesRound;
+      const isActive =
+        activeInterview?.id === interview.id &&
+        jobEvent &&
+        (jobEvent.status === "queued" || jobEvent.status === "running");
+      const isFailed =
+        activeInterview?.id === interview.id && jobEvent?.status === "failed";
+      const isCancelled =
+        activeInterview?.id === interview.id && jobEvent?.status === "cancelled";
+
+      const status =
+        isActive
+          ? "processing"
+          : isFailed
+            ? "interrupted"
+            : isCancelled
+              ? "stopped"
+              : interview.artifact_root_path
+                ? "ready"
+                : "not_processed";
+
+      const matchesStatus =
+        statusFilter === "all" || statusFilter === status;
+
+      return matchesSearch && matchesRound && matchesStatus;
     });
 
     return [...filtered].sort((left, right) => {
@@ -472,9 +496,12 @@ export default function App() {
       return sortDirection === "asc" ? comparison : -comparison;
     });
   }, [
+    activeInterview?.id,
     interviews,
+    jobEvent,
     roundFilter,
     searchQuery,
+    statusFilter,
     sortDirection,
     sortField,
   ]);
@@ -1377,8 +1404,8 @@ export default function App() {
           </span>
         )}
         <span>
-          <strong>{interview.company}</strong>
-          <small>
+          {!grouped && <strong>{interview.company}</strong>}
+          <small className={grouped ? "grouped-primary-label" : undefined}>
             {interview.role ?? "Interview"} · Round {interview.sequence_number}
           </small>
         </span>
@@ -1424,7 +1451,11 @@ export default function App() {
       </span>
 
       <span className="transcription-time-cell">
-        {formatDuration(interview.transcription_seconds)}
+        {interview.transcription_seconds != null
+          ? formatDuration(interview.transcription_seconds)
+          : interview.artifact_root_path
+            ? "Not recorded"
+            : "—"}
       </span>
 
       <span>
@@ -1720,7 +1751,7 @@ export default function App() {
           <div className="section-header library-header">
             <div>
               <h2>Interviews</h2>
-              <p>Search, sort and organize every interview round.</p>
+              <p>Search, filter and organize your interview history.</p>
             </div>
 
             <div className="library-toolbar">
@@ -1728,7 +1759,7 @@ export default function App() {
                 <span>⌕</span>
                 <input
                   aria-label="Search interviews"
-                  placeholder="Search company, interviewer, round or role"
+                  placeholder="Search interviews…"
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
                 />
@@ -1746,6 +1777,20 @@ export default function App() {
                     {roundType}
                   </option>
                 ))}
+              </select>
+
+              <select
+                aria-label="Filter by interview status"
+                className="library-select"
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value)}
+              >
+                <option value="all">All statuses</option>
+                <option value="ready">Ready</option>
+                <option value="processing">Processing</option>
+                <option value="stopped">Stopped</option>
+                <option value="interrupted">Interrupted</option>
+                <option value="not_processed">Not processed</option>
               </select>
 
               <label className="group-toggle">
@@ -1798,7 +1843,7 @@ export default function App() {
                   type="button"
                   onClick={() => toggleSort("round")}
                 >
-                  Round <span>{sortIndicator("round")}</span>
+                  Round type <span>{sortIndicator("round")}</span>
                 </button>
                 <span>Interviewer</span>
                 <button

@@ -2920,3 +2920,46 @@ select {
     opacity: 1;
   }
 }
+
+
+/* ------------------------------------------------------------------
+   Interview Library polish
+   ------------------------------------------------------------------ */
+
+.company-group-row {
+  padding-top: 13px;
+  padding-bottom: 13px;
+  background: #f6faf8;
+}
+
+.company-group-row strong {
+  font-size: 11px;
+  font-weight: 800;
+  color: #2f3f47;
+}
+
+.grouped-primary-label {
+  display: block;
+  color: #566873;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.grouped-interview-row .interview-primary {
+  padding-left: 33px;
+}
+
+.transcription-time-cell {
+  white-space: nowrap;
+}
+
+.transcription-time-cell:has(+ *) {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1180px) {
+  .library-toolbar {
+    justify-content: flex-start;
+  }
+}
